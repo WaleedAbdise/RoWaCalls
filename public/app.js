@@ -99,6 +99,7 @@ function cleanup() {
   if (current) {
     const old = current;
     current = null;
+    clearTimeout(old.cutoff);
     old.pc?.close();
     old.stream?.getTracks().forEach(track => track.stop());
   }
@@ -125,6 +126,16 @@ async function playRemote() {
 
 function send(call, action, data = {}) {
   return api('call', { action, id: call.id, ...data });
+}
+
+function scheduleCutoff(call, { remainingMs, cutoffMessage }) {
+  if (call.cutoff || !Number.isFinite(remainingMs)) return;
+  call.cutoff = setTimeout(() => {
+    if (call !== current) return;
+    cleanup();
+    notice('room-notice', cutoffMessage);
+    renderCall();
+  }, remainingMs);
 }
 
 async function prepare(call) {
@@ -225,7 +236,8 @@ async function dial(mode, offer = null) {
     if (offer) {
       await call.pc.setRemoteDescription(offer.offer);
       await call.pc.setLocalDescription(await call.pc.createAnswer());
-      await send(call, 'accept', { sdp: call.pc.localDescription.sdp });
+      const accepted = await send(call, 'accept', { sdp: call.pc.localDescription.sdp });
+      scheduleCutoff(call, accepted);
       call.connectingAt = Date.now();
       call.status = 'Connecting…';
     } else {
@@ -262,6 +274,7 @@ async function reconcile(snapshot) {
       cleanup();
       notice('room-notice', remote?.reason || 'Call ended.');
     } else {
+      scheduleCutoff(call, remote);
       if (remote.answer && !call.pc.remoteDescription) {
         await call.pc.setRemoteDescription(remote.answer);
         call.connectingAt = Date.now();

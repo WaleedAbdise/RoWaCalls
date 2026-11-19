@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { createHash, createHmac, randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createQuota, quotaMessage } from './quota.mjs';
 
 const accounts = {
   waleed: { name: 'Waleed Abdullah', password: process.env.WALEED_PASSWORD },
@@ -15,13 +16,17 @@ for (const account of Object.values(accounts)) account.hash = digest(account.pas
 
 const origin = new URL(process.env.PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000');
 const secure = origin.protocol === 'https:';
+const quota = createQuota(secure);
 const turnUrls = (process.env.TURN_URLS || '').split(',').map(url => url.trim()).filter(Boolean);
 const turnSecret = process.env.TURN_SECRET;
 const turnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID;
 const turnToken = process.env.CLOUDFLARE_TURN_API_TOKEN;
 const managedTurn = !!(turnKeyId && turnToken);
-if (secure && !managedTurn && (!turnUrls.some(url => url.startsWith('turns:')) || !turnSecret)) {
-  throw new Error('HTTPS deployment requires Cloudflare TURN credentials or TURN_SECRET and a turns: relay URL.');
+const meteredApp = process.env.METERED_TURN_APP;
+const meteredKey = process.env.METERED_TURN_API_KEY;
+const meteredTurn = !!(meteredKey && /^[a-z0-9-]+$/.test(meteredApp || ''));
+if (secure && !meteredTurn && !managedTurn && (!turnUrls.some(url => url.startsWith('turns:')) || !turnSecret)) {
+  throw new Error('HTTPS deployment requires a configured TLS TURN relay.');
 }
 
 const sessions = new Map();
@@ -55,6 +60,13 @@ async function body(req) {
 }
 
 async function iceServers(id) {
+  if (meteredTurn) {
+    const url = new URL(`https://${meteredApp}.metered.live/api/v1/turn/credentials`);
+    url.searchParams.set('apiKey', meteredKey);
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: 'error' });
+    if (!response.ok) throw new Error('TURN credentials unavailable.');
+    return requireTlsRelay(await response.json());
+  }
   if (managedTurn) {
     const url = `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(turnKeyId)}/credentials/generate-ice-servers`;
     const response = await fetch(url, {
@@ -65,15 +77,19 @@ async function iceServers(id) {
     });
     if (!response.ok) throw new Error('TURN credentials unavailable.');
     const data = await response.json();
-    if (!Array.isArray(data.iceServers) || !data.iceServers.some(server =>
-      [server.urls].flat().some(url => typeof url === 'string' && url.startsWith('turns:'))
-    )) throw new Error('TURN credentials unavailable.');
-    return data.iceServers;
+    return requireTlsRelay(data.iceServers);
   }
   if (!turnUrls.length || !turnSecret) return [];
   const username = `${Math.floor(Date.now() / 1000) + 3600}:${id}`;
   const credential = createHmac('sha1', turnSecret).update(username).digest('base64');
   return [{ urls: turnUrls, username, credential }];
+}
+
+function requireTlsRelay(servers) {
+  if (!Array.isArray(servers) || !servers.some(server =>
+    [server?.urls].flat().some(url => typeof url === 'string' && url.startsWith('turns:'))
+  )) throw new Error('TURN credentials unavailable.');
+  return servers;
 }
 
 function expire(now) {
@@ -83,13 +99,17 @@ function expire(now) {
     now - (sessions.get(id)?.seen || 0) > 30000);
   if (state === 'ended') {
     if (now - updated > 10000) call = null;
+  } else if (call.lease && now >= call.lease.deadline) {
+    endCall(call.lease.reason);
   } else if (missing || (state === 'ringing' && now - updated > 45000)) {
     endCall(missing ? 'Connection lost.' : 'No answer.');
   }
 }
 
 function endCall(reason) {
+  const lease = call.lease;
   call = { id: call.id, caller: call.caller, callee: call.callee, state: 'ended', reason, updated: Date.now() };
+  if (lease) void quota.release(lease).catch(() => console.error('Could not return unused call time.'));
 }
 
 function snapshot(id, session, now) {
@@ -103,6 +123,8 @@ function snapshot(id, session, now) {
       offer: outgoing ? undefined : call.offer,
       answer: outgoing ? call.answer : undefined,
       candidates: (outgoing ? call.calleeCandidates : call.callerCandidates) || [],
+      remainingMs: call.lease ? Math.max(0, call.lease.deadline - now) : undefined,
+      cutoffMessage: call.lease?.reason,
       reason: call.reason
     };
   }
@@ -168,6 +190,7 @@ const server = createServer(async (req, res) => {
     }
     if (path === '/api/ice' && req.method === 'GET') {
       try {
+        if (!(await quota.available())) return json(res, 429, { error: quotaMessage });
         return json(res, 200, await iceServers(session.user));
       } catch {
         return json(res, 503, { error: 'The call relay is unavailable. Try again shortly.' });
@@ -185,6 +208,10 @@ const server = createServer(async (req, res) => {
     if (!sessions.has(id)) return json(res, 401, { error: 'Sign in to continue.' });
     const conflict = () => json(res, 409, { error: 'This call is no longer available.' });
     if (data.action === 'start') {
+      const available = await quota.available().catch(() => null);
+      if (!available) {
+        return json(res, available === false ? 429 : 503, { error: available === false ? quotaMessage : 'Monthly call usage is unavailable.' });
+      }
       if (call && call.state !== 'ended') return json(res, 409, { error: 'A call is already in progress.' });
       if (!['voice', 'video'].includes(data.mode) || typeof data.sdp !== 'string') throw new Error('Invalid offer.');
       call = {
@@ -197,12 +224,34 @@ const server = createServer(async (req, res) => {
     const isCaller = call.caller === id;
     const isCallee = call.callee === id;
     const invited = call.state === 'ringing' && sessions.get(call.caller)?.user !== session.user;
-    if (data.action === 'accept' && invited) {
+    if (data.action === 'accept' && invited && !call.accepting) {
       if (typeof data.sdp !== 'string') throw new Error('Invalid answer.');
+      const ringing = call;
+      ringing.accepting = true;
+      let lease;
+      try {
+        lease = await quota.reserve(ringing.id);
+      } catch {
+        return json(res, 503, { error: 'Monthly call usage is unavailable.' });
+      } finally {
+        ringing.accepting = false;
+      }
+      if (call !== ringing || !sessions.has(id)) {
+        if (lease) void quota.release(lease, lease.start).catch(() => console.error('Could not return unused call time.'));
+        return conflict();
+      }
+      if (!lease) {
+        endCall(quotaMessage);
+        return json(res, 429, { error: quotaMessage });
+      }
       call.callee = id;
       call.answer = { type: 'answer', sdp: data.sdp };
       call.state = 'active';
+      call.lease = lease;
       call.updated = Date.now();
+      return json(res, 200, {
+        remainingMs: Math.max(0, lease.deadline - Date.now()), cutoffMessage: lease.reason
+      });
     } else if (data.action === 'decline' && invited) {
       call.callee = id;
       endCall('Call declined.');

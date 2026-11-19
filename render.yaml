@@ -15,7 +15,11 @@ services:
         sync: false
       - key: ROHA_PASSWORD
         sync: false
-      - key: CLOUDFLARE_TURN_KEY_ID
+      - key: METERED_TURN_APP
         sync: false
-      - key: CLOUDFLARE_TURN_API_TOKEN
+      - key: METERED_TURN_API_KEY
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
