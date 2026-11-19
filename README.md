@@ -13,7 +13,9 @@ npm start
 
 Open [http://localhost:3000](http://localhost:3000). The setup command creates a separate access password for each account in the ignored `.env` file. Share only Roha’s password, privately. For a local call, open the page in two browser profiles or use one normal and one private window, then sign in as different people. Wear headphones if you test with two live microphones in the same room.
 
-Keep the signed-in page open to receive calls. Interact with the page after a refresh to enable the ringtone in browsers that require an interaction. On phones, keep the browser in the foreground during calls.
+Keep the signed-in page open to receive calls and tap **Enable ringer** if shown. The caller hears a ringback tone until the call is answered or ends. On phones, keep the browser in the foreground to receive and hear calls.
+
+During a video call, **Fullscreen** expands the stage and **Switch views** swaps the large feed and the corner preview. Open **Filters** to choose a sticker for your camera that both people can see, or try one on your partner’s camera for your view only. Drag a sticker to position it on your screen.
 
 ## Deploy for two locations
 

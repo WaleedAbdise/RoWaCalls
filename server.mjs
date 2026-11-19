@@ -5,6 +5,7 @@ import { open, readdir } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createQuota, quotaMessage } from './quota.mjs';
+import { videoFilters } from './public/video-filters.js';
 
 const accounts = {
   waleed: { name: 'Waleed Abdullah', password: process.env.WALEED_PASSWORD },
@@ -40,6 +41,7 @@ let call = null;
 const staticFiles = new Map([
   ['/', ['index.html', 'text/html']],
   ['/style.css', ['style.css', 'text/css']],
+  ['/video-filters.js', ['video-filters.js', 'text/javascript']],
   ['/app.js', ['app.js', 'text/javascript']]
 ].map(([path, [file, type]]) => [path, { type, body: readFileSync(new URL(`./public/${file}`, import.meta.url)) }]));
 const galleryDirectory = process.env.GALLERY_DIRECTORY || fileURLToPath(new URL('./images/', import.meta.url));
@@ -193,6 +195,7 @@ function snapshot(id, session, now) {
       offer: outgoing ? undefined : call.offer,
       answer: outgoing ? call.answer : undefined,
       candidates: (outgoing ? call.calleeCandidates : call.callerCandidates) || [],
+      partnerFilter: outgoing ? call.calleeFilter : call.callerFilter,
       remainingMs: call.lease ? Math.max(0, call.lease.deadline - now) : undefined,
       cutoffMessage: call.lease?.reason,
       reason: call.reason
@@ -330,6 +333,12 @@ const server = createServer(async (req, res) => {
       endCall('Call declined.');
     } else if (data.action === 'end' && (isCaller || isCallee)) {
       endCall('Call ended.');
+    } else if (data.action === 'filter' && (isCaller || isCallee) &&
+        call.state === 'active' && call.mode === 'video') {
+      if (typeof data.filter !== 'string' || !Object.hasOwn(videoFilters, data.filter)) {
+        return json(res, 400, { error: 'Choose a video filter from the list.' });
+      }
+      call[isCaller ? 'callerFilter' : 'calleeFilter'] = data.filter;
     } else if (data.action === 'candidate' && (isCaller || isCallee)) {
       const list = isCaller ? call.callerCandidates : call.calleeCandidates;
       if (typeof data.candidate?.candidate !== 'string' || list.length >= 128) throw new Error('Invalid ICE candidate.');

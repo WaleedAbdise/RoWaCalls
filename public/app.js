@@ -1,3 +1,5 @@
+import { videoFilters } from './video-filters.js';
+
 const el = id => document.getElementById(id);
 const names = { waleed: 'Waleed Abdullah', roha: 'Roha Nadeem' };
 const seals = { waleed: '🦭♂️', roha: '🦭💕' };
@@ -11,6 +13,9 @@ let actionVersion = 0;
 let lastPoll = Date.now();
 let audioContext;
 let lastRing = 0;
+let ringingMode;
+let ringGain;
+let nativeFullscreen = false;
 let galleryRequest = 0;
 
 async function api(path, data) {
@@ -106,25 +111,43 @@ el('gallery-toggle').onclick = () => {
 function unlockRing() {
   if (!window.AudioContext) return;
   try {
-    audioContext ||= new AudioContext();
-    if (audioContext.state === 'suspended') void audioContext.resume().catch(() => {});
+    if (!audioContext) {
+      audioContext = new AudioContext();
+      audioContext.onstatechange = updateRing;
+    }
+    if (audioContext.state !== 'running') void audioContext.resume().then(updateRing).catch(() => {});
   } catch {
     // The visual incoming-call controls are available regardless of audio support.
   }
 }
 
-function ring() {
-  if (audioContext?.state !== 'running' || Date.now() - lastRing < 3200) return;
+function updateRing() {
+  const running = audioContext?.state === 'running';
+  el('enable-ringer').hidden = !window.AudioContext || running;
+  const mode = current?.ringing ? 'outgoing' : !busy && !current && incoming ? 'incoming' : null;
+  if (mode !== ringingMode || !running) {
+    ringGain?.disconnect();
+    ringGain = null;
+    lastRing = 0;
+    ringingMode = mode;
+  }
+  if (!running || !mode || Date.now() - lastRing < 2800) return;
   lastRing = Date.now();
-  for (const [offset, frequency] of [[0, 587], [.24, 784]]) {
+  if (!ringGain) {
+    ringGain = audioContext.createGain();
+    ringGain.connect(audioContext.destination);
+  }
+  const notes = mode === 'incoming' ? [[0, 587], [.24, 784], [.48, 880]] : [[0, 440], [.28, 480]];
+  for (const [offset, frequency] of notes) {
     const start = audioContext.currentTime + offset;
     const tone = audioContext.createOscillator();
     const gain = audioContext.createGain();
     tone.frequency.value = frequency;
     gain.gain.setValueAtTime(.001, start);
-    gain.gain.exponentialRampToValueAtTime(.1, start + .03);
+    gain.gain.exponentialRampToValueAtTime(mode === 'incoming' ? .16 : .09, start + .03);
     gain.gain.exponentialRampToValueAtTime(.001, start + .2);
-    tone.connect(gain).connect(audioContext.destination);
+    tone.connect(gain).connect(ringGain);
+    tone.onended = () => gain.disconnect();
     tone.start(start);
     tone.stop(start + .21);
   }
@@ -137,11 +160,16 @@ function renderCall() {
   el('call-panel').hidden = !call;
   el('incoming-controls').hidden = !invite;
   el('active-controls').hidden = !current;
-  el('stage').hidden = !(current?.mode === 'video' && current.stream);
+  const video = current?.mode === 'video' && !!current.stream;
+  el('stage').hidden = !video;
+  el('video-tools').hidden = !video;
+  el('swap-video').disabled = !video || el('local-frame').hidden;
+  el('filter-panel').hidden = !current?.connectedAt;
   el('camera').hidden = current?.mode !== 'video';
   for (const id of ['voice', 'video', 'accept', 'decline', 'hangup', 'logout']) el(id).disabled = busy;
   el('mute').disabled = !current?.stream;
   el('camera').disabled = !current?.stream;
+  updateRing();
   if (!call) return;
   const type = call.mode === 'video' ? 'video' : 'voice';
   const prefix = type[0].toUpperCase() + type.slice(1);
@@ -160,11 +188,117 @@ function cleanup() {
   }
   for (const id of ['local', 'remote', 'remote-audio']) el(id).srcObject = null;
   el('local').hidden = true;
+  el('local-frame').hidden = true;
+  el('filter-panel').open = false;
+  el('filter-target').value = 'local';
+  el('filter-choice').value = 'none';
+  notice('filter-notice');
+  for (const id of ['local-filter', 'remote-filter']) {
+    el(id).hidden = true;
+    el(id).style.removeProperty('--sticker-x');
+    el(id).style.removeProperty('--sticker-y');
+  }
+  setSwapped(false);
+  setFullscreen(false);
+  updateRing();
   el('play').hidden = true;
   el('mute').setAttribute('aria-pressed', 'false');
   el('camera').setAttribute('aria-pressed', 'false');
   el('mute').textContent = 'Mute';
   el('camera').textContent = 'Turn camera off';
+}
+
+function setSwapped(swapped) {
+  el('stage').classList.toggle('swapped', swapped);
+  el('swap-video').setAttribute('aria-pressed', String(swapped));
+}
+
+function setFullscreen(fullscreen) {
+  const panel = el('call-panel');
+  document.body.classList.toggle('call-immersive', fullscreen);
+  panel.classList.toggle('call-fullscreen', fullscreen);
+  el('fullscreen').setAttribute('aria-pressed', String(fullscreen));
+  el('fullscreen').textContent = fullscreen ? 'Exit fullscreen' : 'Fullscreen';
+  if (!fullscreen && document.fullscreenElement === panel) void document.exitFullscreen().catch(() => {});
+}
+
+el('fullscreen').onclick = () => {
+  const fullscreen = !el('call-panel').classList.contains('call-fullscreen');
+  setFullscreen(fullscreen);
+  if (fullscreen) void el('call-panel').requestFullscreen?.().catch(() => {});
+};
+document.addEventListener('fullscreenchange', () => {
+  if (document.fullscreenElement === el('call-panel')) {
+    nativeFullscreen = true;
+    if (!current) setFullscreen(false);
+  } else if (nativeFullscreen) {
+    nativeFullscreen = false;
+    setFullscreen(false);
+  }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && el('call-panel').classList.contains('call-fullscreen')) setFullscreen(false);
+});
+el('swap-video').onclick = () => setSwapped(!el('stage').classList.contains('swapped'));
+
+function filterValue(target) {
+  if (target === 'local') return current?.localFilter || 'none';
+  return current?.remoteFilter || current?.partnerFilter || 'none';
+}
+
+function drawFilters() {
+  for (const target of ['local', 'remote']) {
+    const sticker = el(target + '-filter');
+    const filter = filterValue(target);
+    sticker.hidden = filter === 'none';
+    if (sticker.dataset.filter !== filter) {
+      sticker.dataset.filter = filter;
+      sticker.textContent = videoFilters[filter].art;
+    }
+  }
+  el('filter-choice').value = filterValue(el('filter-target').value);
+}
+
+for (const [id, filter] of Object.entries(videoFilters)) {
+  el('filter-choice').add(new Option(filter.name, id));
+}
+el('filter-target').onchange = () => {
+  notice('filter-notice');
+  drawFilters();
+};
+el('filter-choice').onchange = async event => {
+  const call = current;
+  if (!call) return;
+  const choice = event.target;
+  const filter = choice.value;
+  notice('filter-notice');
+  if (el('filter-target').value === 'remote') {
+    call.remoteFilter = filter;
+    drawFilters();
+    return;
+  }
+  choice.disabled = true;
+  try {
+    await send(call, 'filter', { filter });
+    if (call === current) call.localFilter = filter;
+  } catch (error) {
+    if (call === current) notice('filter-notice', describe(error));
+  } finally {
+    choice.disabled = false;
+    if (call === current) drawFilters();
+  }
+};
+
+for (const id of ['local-filter', 'remote-filter']) {
+  const sticker = el(id);
+  sticker.onpointerdown = event => sticker.setPointerCapture(event.pointerId);
+  sticker.onpointermove = event => {
+    if (!sticker.hasPointerCapture(event.pointerId)) return;
+    const frame = sticker.parentElement.getBoundingClientRect();
+    const percent = (position, size) => Math.min(92, Math.max(8, 100 * position / size)) + '%';
+    sticker.style.setProperty('--sticker-x', percent(event.clientX - frame.left, frame.width));
+    sticker.style.setProperty('--sticker-y', percent(event.clientY - frame.top, frame.height));
+  };
 }
 
 async function playRemote() {
@@ -252,6 +386,7 @@ async function prepare(call) {
   if (call.mode === 'video') {
     el('local').srcObject = call.stream;
     el('local').hidden = false;
+    el('local-frame').hidden = false;
     void el('local').play().catch(() => {});
   }
   for (const track of call.stream.getTracks()) pc.addTrack(track, call.stream);
@@ -299,6 +434,7 @@ async function dial(mode, offer = null) {
       await call.pc.setLocalDescription(await call.pc.createOffer());
       const result = await send(call, 'start', { mode, sdp: call.pc.localDescription.sdp });
       call.id = result.id;
+      call.ringing = true;
       call.status = 'Ringing…';
     }
     incoming = null;
@@ -329,7 +465,11 @@ async function reconcile(snapshot) {
       cleanup();
       notice('room-notice', remote?.reason || 'Call ended.');
     } else {
+      call.ringing = remote.state === 'ringing';
+      updateRing();
       scheduleCutoff(call, remote);
+      call.partnerFilter = remote.partnerFilter;
+      drawFilters();
       if (remote.answer && !call.pc.remoteDescription) {
         await call.pc.setRemoteDescription(remote.answer);
         call.connectingAt = Date.now();
@@ -359,7 +499,6 @@ async function reconcile(snapshot) {
   } else if (!remote?.outgoing && remote?.state === 'ringing') {
     if (incoming?.id !== remote.id) notice('room-notice');
     incoming = remote;
-    ring();
   } else if (incoming) {
     incoming = null;
     if (remote?.state !== 'ended') notice('room-notice', 'The incoming call is no longer available.');
@@ -413,14 +552,21 @@ el('login-form').addEventListener('submit', async event => {
     el('sign-in').disabled = false;
   }
 });
-document.addEventListener('pointerdown', unlockRing, { once: true });
+document.addEventListener('pointerdown', () => {
+  if (account && audioContext?.state !== 'running') unlockRing();
+});
+el('enable-ringer').onclick = unlockRing;
 el('logout').onclick = () => act(async () => {
   await api('logout', {});
   setAccount(null);
 });
-el('voice').onclick = () => act(() => dial('voice'));
-el('video').onclick = () => act(() => dial('video'));
-el('accept').onclick = () => act(() => dial(incoming.mode, incoming));
+function callWithRinger(action) {
+  unlockRing();
+  return act(action);
+}
+el('voice').onclick = () => callWithRinger(() => dial('voice'));
+el('video').onclick = () => callWithRinger(() => dial('video'));
+el('accept').onclick = () => callWithRinger(() => dial(incoming.mode, incoming));
 el('decline').onclick = () => act(async () => {
   await send(incoming, 'decline');
   incoming = null;
@@ -439,8 +585,11 @@ el('camera').onclick = () => {
   if (!track) return;
   track.enabled = !track.enabled;
   el('local').hidden = !track.enabled;
+  el('local-frame').hidden = !track.enabled;
+  if (!track.enabled) setSwapped(false);
   el('camera').textContent = track.enabled ? 'Turn camera off' : 'Turn camera on';
   el('camera').setAttribute('aria-pressed', String(!track.enabled));
+  renderCall();
 };
 window.addEventListener('pagehide', () => {
   const call = current;
@@ -448,6 +597,7 @@ window.addEventListener('pagehide', () => {
   if (call?.id) void send(call, 'end').catch(() => {});
 });
 setInterval(poll, 900);
+setInterval(updateRing, 350);
 try {
   const snapshot = await api('state');
   if (!account) setAccount(snapshot.user);

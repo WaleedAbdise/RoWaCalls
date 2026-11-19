@@ -71,8 +71,32 @@
             <p id="call-status" role="status"></p>
           </div>
           <div id="stage" class="stage" hidden>
-            <video id="remote" autoplay playsinline aria-label="Video from your partner"></video>
-            <video id="local" autoplay muted playsinline aria-label="Your camera preview" hidden></video>
+            <div id="remote-frame" class="video-frame">
+              <video id="remote" autoplay playsinline aria-label="Video from your partner"></video>
+              <span id="remote-filter" class="video-sticker" aria-hidden="true" hidden></span>
+            </div>
+            <div id="local-frame" class="video-frame" hidden>
+              <video id="local" autoplay muted playsinline aria-label="Your camera preview" hidden></video>
+              <span id="local-filter" class="video-sticker" aria-hidden="true" hidden></span>
+            </div>
+          </div>
+          <div id="video-tools" class="video-tools" hidden>
+            <button id="fullscreen" class="secondary" aria-pressed="false">Fullscreen</button>
+            <button id="swap-video" class="secondary" aria-pressed="false">Switch views</button>
+            <details id="filter-panel">
+              <summary>Filters</summary>
+              <div class="filter-options">
+                <label for="filter-target">Apply to</label>
+                <select id="filter-target">
+                  <option value="local">My camera · both see</option>
+                  <option value="remote">Their camera · only I see</option>
+                </select>
+                <label for="filter-choice">Filter</label>
+                <select id="filter-choice"></select>
+                <p class="filter-tip">Drag a sticker to position it.</p>
+                <p id="filter-notice" class="notice" role="status" hidden></p>
+              </div>
+            </details>
           </div>
           <audio id="remote-audio" autoplay></audio>
           <div id="incoming-controls" class="controls" hidden>
@@ -87,7 +111,10 @@
           </div>
         </section>
         <p id="room-notice" class="notice" role="status" hidden></p>
-        <p class="room-tip">Keep this page open to receive calls.</p>
+        <div class="ringer-row">
+          <p class="room-tip">Keep this page open to receive calls.</p>
+          <button id="enable-ringer" class="quiet">Enable ringer</button>
+        </div>
         <section class="gallery" aria-labelledby="gallery-title">
           <div class="gallery-heading">
             <h2 id="gallery-title">Our little memories <span aria-hidden="true">♡</span></h2>

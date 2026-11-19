@@ -6,6 +6,6 @@
   "scripts": {
     "setup": "node setup.mjs",
     "start": "node --env-file-if-exists=.env server.mjs",
-    "check": "node --check server.mjs && node --check quota.mjs && node --check setup.mjs && node --check public/app.js"
+    "check": "node --check server.mjs && node --check quota.mjs && node --check setup.mjs && node --check public/app.js && node --check public/video-filters.js"
   }
 }
