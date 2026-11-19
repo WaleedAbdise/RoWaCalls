@@ -1,0 +1,125 @@
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: #faf7ff;
+  background: #10101a;
+  font-synthesis: none;
+  --muted: #b6aec8;
+  --line: #373048;
+  --purple: #d6b6ff;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; min-width: 280px; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .54; }
+:focus-visible { outline: 3px solid #e0c7ff; outline-offset: 4px; }
+.shell {
+  max-width: 1240px;
+  min-height: 100svh;
+  margin: auto;
+  padding: 0 clamp(20px, 5vw, 72px);
+  display: flex;
+  flex-direction: column;
+}
+.topbar, footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 24px 0;
+}
+.brand { display: inline-flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; font-weight: 750; letter-spacing: -.035em; font-size: 1.25rem; }
+.brand-light { color: #cfc3e0; font-weight: 500; }
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 39px;
+  color: #211335;
+  border-radius: 13px;
+  background: var(--purple);
+}
+.top-actions, .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.private {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  background: #211a30;
+  border: 1px solid #3a2b50;
+  border-radius: 999px;
+  color: #e4d3fa;
+  font-size: .875rem;
+}
+.private span { color: #c8a4ff; font-size: .65rem; }
+main { flex: 1; display: grid; align-items: center; padding: clamp(36px, 8vh, 95px) 0; }
+.login-layout { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); align-items: center; gap: clamp(26px, 7vw, 100px); }
+.route { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; color: #d0b6ed; letter-spacing: .13em; font-size: .875rem; font-weight: 700; }
+.route span { font-size: .7rem; }
+h1, h2, p { margin-top: 0; }
+h1 { font-size: clamp(3.1rem, 7vw, 6.5rem); font-weight: 700; line-height: .98; letter-spacing: -.078em; margin-bottom: 24px; }
+h1 em { color: var(--purple); font-family: Georgia, serif; font-weight: 400; letter-spacing: -.066em; }
+h1 span { color: var(--purple); }
+h2 { letter-spacing: -.04em; margin-bottom: 10px; font-size: clamp(1.4rem, 3vw, 1.85rem); }
+.intro-copy, .login-card > p, .room-heading > p:last-child, .room-tip { color: var(--muted); line-height: 1.55; }
+.intro-copy { max-width: 390px; }
+.orbit-art { position: relative; isolation: isolate; height: 175px; max-width: 440px; display: flex; align-items: center; justify-content: center; gap: clamp(18px, 4vw, 45px); overflow: hidden; }
+.orbit { position: absolute; z-index: -1; width: 93%; height: 70%; border: 1px solid #614780; border-radius: 50%; transform: rotate(-13deg); }
+.orbit-two { width: 79%; height: 55%; border-color: #452f60; transform: rotate(12deg); }
+.art-avatar, .avatar { display: grid; place-items: center; flex: none; width: 74px; height: 74px; border-radius: 50%; font-size: 1.2rem; font-weight: 750; color: #261634; background: #d7b6ff; }
+.art-w { transform: translateY(15px); }
+.art-r { transform: translateY(-15px); background: #f4bacf; }
+.art-star { color: #ead2ff; font-size: 2rem; }
+.card { background: linear-gradient(135deg, #231c33, #171622 72%); border: 1px solid var(--line); border-radius: 25px; box-shadow: 0 24px 85px #05040c55; }
+.login-card { padding: clamp(22px, 4vw, 45px); }
+label { display: block; margin: 20px 0 8px; color: #f3eafa; font-weight: 620; }
+input, select {
+  width: 100%;
+  min-height: 50px;
+  border: 1px solid #4d405f;
+  border-radius: 11px;
+  padding: 0 14px;
+  color: inherit;
+  background: #15131f;
+}
+button { border: 1px solid transparent; border-radius: 11px; min-height: 46px; padding: 10px 17px; font-weight: 700; color: inherit; }
+.primary { background: var(--purple); color: #211333; }
+.primary:hover:not(:disabled) { background: #e2ccff; }
+.secondary, .quiet { background: #292238; border-color: #473859; }
+.secondary:hover:not(:disabled), .quiet:hover:not(:disabled) { background: #3a2e4b; }
+.danger { color: #ffe8ed; background: #792d4d; border-color: #a04a6c; }
+.danger:hover:not(:disabled) { background: #93405f; }
+.login-card > button { width: 100%; margin-top: 24px; }
+.notice { color: #ffcade !important; margin: 14px 0 0; overflow-wrap: anywhere; }
+.room-heading h1 { font-size: clamp(2.8rem, 7vw, 5.4rem); margin-bottom: 14px; }
+.contact-card, .call-card { padding: clamp(18px, 4vw, 32px); }
+.contact-card, .contact-main { display: flex; align-items: center; gap: 18px; }
+.contact-card { justify-content: space-between; flex-wrap: wrap; }
+.contact-main h2 { margin-bottom: 5px; }
+.presence { color: var(--muted); display: flex; align-items: center; gap: 8px; margin: 0; }
+#presence-dot { width: 9px; height: 9px; border-radius: 50%; background: #a39aaf; }
+#presence-dot.online { background: #9debbb; }
+.call-card { margin-top: 18px; }
+.call-heading p { color: var(--muted); }
+.stage { position: relative; background: #0c0b14; border-radius: 14px; overflow: hidden; margin: 14px 0; }
+#remote { width: 100%; max-height: 56svh; min-height: 180px; aspect-ratio: 16 / 9; display: block; object-fit: contain; }
+#local { position: absolute; right: 12px; bottom: 12px; width: 25%; min-width: 75px; max-width: 180px; aspect-ratio: 4 / 3; object-fit: cover; background: #191421; border: 1px solid #665578; border-radius: 9px; transform: scaleX(-1); }
+.room-tip { margin: 18px 0 0; }
+footer { border-bottom: 0; border-top: 1px solid var(--line); color: var(--muted); font-size: .875rem; }
+
+@media (max-width: 720px) {
+  .login-layout { grid-template-columns: 1fr; }
+  .orbit-art { height: 105px; }
+  .art-avatar, .avatar { width: 57px; height: 57px; font-size: 1rem; }
+  .topbar { padding: 16px 0; }
+  .top-actions { justify-content: flex-end; }
+  .quiet { min-height: 40px; padding: 8px 10px; }
+  .contact-card > .controls { width: 100%; }
+  .contact-card > .controls > button { flex: 1; }
+}
+@media (max-width: 360px) {
+  .top-actions .private:has(+ button:not([hidden])) { display: none; }
+}

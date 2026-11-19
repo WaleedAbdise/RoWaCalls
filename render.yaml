@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: rowa-calls
+    runtime: node
+    plan: free
+    buildCommand: npm run check
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: HOST
+        value: 0.0.0.0
+      - key: WALEED_PASSWORD
+        sync: false
+      - key: ROHA_PASSWORD
+        sync: false
+      - key: TURN_URLS
+        sync: false
+      - key: TURN_SECRET
+        sync: false
