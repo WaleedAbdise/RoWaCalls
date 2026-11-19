@@ -17,8 +17,11 @@ const origin = new URL(process.env.PUBLIC_ORIGIN || process.env.RENDER_EXTERNAL_
 const secure = origin.protocol === 'https:';
 const turnUrls = (process.env.TURN_URLS || '').split(',').map(url => url.trim()).filter(Boolean);
 const turnSecret = process.env.TURN_SECRET;
-if (secure && (!turnUrls.some(url => url.startsWith('turns:')) || !turnSecret)) {
-  throw new Error('HTTPS deployment requires TURN_SECRET and at least one turns: relay URL.');
+const turnKeyId = process.env.CLOUDFLARE_TURN_KEY_ID;
+const turnToken = process.env.CLOUDFLARE_TURN_API_TOKEN;
+const managedTurn = !!(turnKeyId && turnToken);
+if (secure && !managedTurn && (!turnUrls.some(url => url.startsWith('turns:')) || !turnSecret)) {
+  throw new Error('HTTPS deployment requires Cloudflare TURN credentials or TURN_SECRET and a turns: relay URL.');
 }
 
 const sessions = new Map();
@@ -51,7 +54,22 @@ async function body(req) {
   return data;
 }
 
-function iceServers(id) {
+async function iceServers(id) {
+  if (managedTurn) {
+    const url = `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(turnKeyId)}/credentials/generate-ice-servers`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${turnToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl: 3600 }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) throw new Error('TURN credentials unavailable.');
+    const data = await response.json();
+    if (!Array.isArray(data.iceServers) || !data.iceServers.some(server =>
+      [server.urls].flat().some(url => typeof url === 'string' && url.startsWith('turns:'))
+    )) throw new Error('TURN credentials unavailable.');
+    return data.iceServers;
+  }
   if (!turnUrls.length || !turnSecret) return [];
   const username = `${Math.floor(Date.now() / 1000) + 3600}:${id}`;
   const credential = createHmac('sha1', turnSecret).update(username).digest('base64');
@@ -148,7 +166,13 @@ const server = createServer(async (req, res) => {
     if (path === '/api/state' && req.method === 'GET') {
       return json(res, 200, { user: session.user, ...snapshot(id, session, now) });
     }
-    if (path === '/api/ice' && req.method === 'GET') return json(res, 200, iceServers(session.user));
+    if (path === '/api/ice' && req.method === 'GET') {
+      try {
+        return json(res, 200, await iceServers(session.user));
+      } catch {
+        return json(res, 503, { error: 'The call relay is unavailable. Try again shortly.' });
+      }
+    }
     if (path === '/api/logout' && req.method === 'POST') {
       if (call && call.state !== 'ended' && [call.caller, call.callee].includes(id)) endCall('Call ended.');
       sessions.delete(id);

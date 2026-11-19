@@ -15,7 +15,7 @@ services:
         sync: false
       - key: ROHA_PASSWORD
         sync: false
-      - key: TURN_URLS
+      - key: CLOUDFLARE_TURN_KEY_ID
         sync: false
-      - key: TURN_SECRET
+      - key: CLOUDFLARE_TURN_API_TOKEN
         sync: false

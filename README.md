@@ -23,7 +23,10 @@ Both people need the same HTTPS URL. Use one always-on Node process behind an HT
 
 ### Render
 
-Create a [Render Blueprint](https://dashboard.render.com/blueprints) from the GitHub repository. The included `render.yaml` configures the Node web service and HTTPS hostname. Enter the two passwords from your local `.env` and the relay's `TURN_URLS` and `TURN_SECRET` in the Render dashboard. The free instance can go to sleep when idle. Use an always-on instance if you want to avoid cold starts.
+1. Create a TURN key in [Cloudflare Realtime](https://developers.cloudflare.com/realtime/turn/generate-credentials/). Save its key ID and API token privately. Cloudflare has a [monthly free allowance](https://developers.cloudflare.com/realtime/pricing/) and charges for usage beyond it.
+2. [Deploy the ROWA Calls Blueprint on Render](https://render.com/deploy?repo=https://github.com/WaleedAbdise/RoWaCalls). Sign in, connect GitHub, and confirm the Free service plan. If Render asks for repository access, grant access to `WaleedAbdise/RoWaCalls`.
+3. Enter `WALEED_PASSWORD` and `ROHA_PASSWORD` from your local `.env`, along with `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN`, in Render's private environment fields. Keep the values out of GitHub. The Blueprint configures the Node service and HTTPS hostname.
+4. Open the Render HTTPS URL after deployment succeeds. Sign in with both accounts and verify a call from your actual devices. The free service can sleep when idle, and a wake-up or restart can require signing in again.
 
 ### Self-hosted Node
 
