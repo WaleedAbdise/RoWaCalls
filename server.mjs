@@ -47,9 +47,31 @@ const photoTypes = new Map([
   ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.png', 'image/png'],
   ['.webp', 'image/webp'], ['.avif', 'image/avif'], ['.gif', 'image/gif']
 ]);
+const bundledPhotos = new Map();
+try {
+  const bundle = JSON.parse(readFileSync(
+    process.env.GALLERY_BUNDLE_FILE || '/etc/secrets/rowa-gallery.json', 'utf8'
+  ));
+  for (const [name, encoded] of Object.entries(bundle)) {
+    if (!/^[0-9]+\.jpg$/.test(name) || typeof encoded !== 'string') {
+      throw new Error('Invalid photo bundle entry.');
+    }
+    const bytes = Buffer.from(encoded, 'base64');
+    if (bytes.length < 3 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+      throw new Error('Invalid photo bundle entry.');
+    }
+    bundledPhotos.set(name, bytes);
+  }
+} catch (error) {
+  if (error.code !== 'ENOENT') console.error('Could not load the private photo bundle.');
+  bundledPhotos.clear();
+}
 
 async function gallery(reqPath, res) {
   if (reqPath === '/api/gallery') {
+    if (bundledPhotos.size) {
+      return json(res, 200, [...bundledPhotos.keys()].map(name => '/api/gallery/' + name));
+    }
     const entries = await readdir(galleryDirectory, { withFileTypes: true }).catch(error => {
       if (error.code !== 'ENOENT') throw error;
       return [];
@@ -61,6 +83,12 @@ async function gallery(reqPath, res) {
   const name = decodeURIComponent(reqPath.slice('/api/gallery/'.length));
   const type = photoTypes.get(extname(name).toLowerCase());
   if (!type || /[/\\\x00]/.test(name)) return json(res, 404, { error: 'Photo unavailable.' });
+  if (bundledPhotos.size) {
+    const bytes = bundledPhotos.get(name);
+    if (!bytes) return json(res, 404, { error: 'Photo unavailable.' });
+    res.writeHead(200, { 'Content-Type': type, 'Content-Length': bytes.length });
+    return res.end(bytes);
+  }
   const file = await open(join(galleryDirectory, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     .catch(error => {
       if (!['ENOENT', 'ELOOP'].includes(error.code)) throw error;
