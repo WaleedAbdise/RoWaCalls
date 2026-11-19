@@ -62,3 +62,9 @@ This app cutoff is independent of the provider's bandwidth allowance. Cloudflare
 5. On your actual devices and networks, verify incoming calls, sound in both directions, and video in both directions. Grant camera and microphone access when prompted.
 
 Server restarts end calls and require both people to sign in again. Run a single process because call state and sessions live in process memory. WebRTC encrypts media in transit. The app host and its HTTPS configuration are part of the trust boundary.
+
+## Private photo gallery
+
+Add JPG, PNG, WebP, AVIF, or GIF files to the local `images/` folder. Reload the signed-in room to see them. Files display in alphabetical order, with numbers sorted naturally. Use JPEG or PNG for iPhone photos in HEIC format. The app serves photos only to signed-in accounts and does not commit them to GitHub.
+
+The deployed gallery reads from the host's own `images/` folder. For a host that can mount private files, set `GALLERY_DIRECTORY` to that mount path. Local photos are not uploaded automatically, and the Render Free deployment displays the gallery placeholder until photos are available to the server.

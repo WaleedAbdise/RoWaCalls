@@ -1,5 +1,6 @@
 const el = id => document.getElementById(id);
 const names = { waleed: 'Waleed Abdullah', roha: 'Roha Nadeem' };
+const seals = { waleed: '🦭♂️', roha: '🦭💕' };
 let account;
 let partner;
 let current = null;
@@ -10,6 +11,7 @@ let actionVersion = 0;
 let lastPoll = Date.now();
 let audioContext;
 let lastRing = 0;
+let galleryRequest = 0;
 
 async function api(path, data) {
   const response = await fetch('/api/' + path, data === undefined ? {
@@ -37,16 +39,69 @@ function setAccount(user) {
   el('room').hidden = !user;
   el('logout').hidden = !user;
   if (!user) {
+    resetGallery();
     cleanup();
     incoming = null;
     renderCall();
     return;
   }
-  partner = names[user === 'waleed' ? 'roha' : 'waleed'];
-  el('partner').textContent = partner;
-  el('avatar').textContent = partner.split(' ').map(name => name[0]).join('');
-  el('welcome').textContent = `Signed in as ${names[user]}.`;
+  const partnerId = user === 'waleed' ? 'roha' : 'waleed';
+  partner = names[partnerId];
+  el('partner').textContent = `${partner} ${seals[partnerId]}`;
+  el('avatar').textContent = '🦭';
+  el('welcome').textContent = `Signed in as ${names[user]} ${seals[user]}`;
+  void loadGallery();
 }
+
+function resetGallery() {
+  galleryRequest++;
+  el('gallery-track').replaceChildren();
+  el('gallery-window').hidden = true;
+  el('gallery-toggle').hidden = true;
+  el('gallery-empty').hidden = false;
+}
+
+async function loadGallery() {
+  resetGallery();
+  const request = galleryRequest;
+  const photos = await api('gallery').catch(() => []);
+  if (request !== galleryRequest || !photos.length) return;
+
+  const window = el('gallery-window');
+  const track = el('gallery-track');
+  const toggle = el('gallery-toggle');
+  const animated = photos.length > 1;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+  const group = document.createElement('div');
+  group.className = 'gallery-group';
+  const count = animated ? Math.ceil(6 / photos.length) * photos.length : 1;
+  for (let index = 0; index < count; index++) {
+    const image = document.createElement('img');
+    image.src = photos[index % photos.length];
+    image.alt = index < photos.length ? `Photo ${index + 1} of Waleed and Roha’s memories` : '';
+    image.decoding = 'async';
+    if (index >= photos.length) image.className = 'gallery-repeat';
+    group.append(image);
+  }
+  track.append(group);
+  if (animated) {
+    const copy = group.cloneNode(true);
+    copy.classList.add('gallery-copy');
+    copy.setAttribute('aria-hidden', 'true');
+    track.append(copy);
+  }
+  window.classList.toggle('gallery-animated', animated);
+  window.classList.remove('gallery-paused');
+  toggle.textContent = 'Pause gallery';
+  toggle.hidden = !animated || reducedMotion.matches;
+  window.hidden = false;
+  el('gallery-empty').hidden = true;
+}
+
+el('gallery-toggle').onclick = () => {
+  const paused = el('gallery-window').classList.toggle('gallery-paused');
+  el('gallery-toggle').textContent = paused ? 'Resume gallery' : 'Pause gallery';
+};
 
 function unlockRing() {
   if (!window.AudioContext) return;

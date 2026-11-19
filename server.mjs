@@ -1,6 +1,9 @@
 import { createServer } from 'node:http';
 import { createHash, createHmac, randomUUID, randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { constants, readFileSync } from 'node:fs';
+import { open, readdir } from 'node:fs/promises';
+import { extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createQuota, quotaMessage } from './quota.mjs';
 
 const accounts = {
@@ -39,6 +42,45 @@ const staticFiles = new Map([
   ['/style.css', ['style.css', 'text/css']],
   ['/app.js', ['app.js', 'text/javascript']]
 ].map(([path, [file, type]]) => [path, { type, body: readFileSync(new URL(`./public/${file}`, import.meta.url)) }]));
+const galleryDirectory = process.env.GALLERY_DIRECTORY || fileURLToPath(new URL('./images/', import.meta.url));
+const photoTypes = new Map([
+  ['.jpg', 'image/jpeg'], ['.jpeg', 'image/jpeg'], ['.png', 'image/png'],
+  ['.webp', 'image/webp'], ['.avif', 'image/avif'], ['.gif', 'image/gif']
+]);
+
+async function gallery(reqPath, res) {
+  if (reqPath === '/api/gallery') {
+    const entries = await readdir(galleryDirectory, { withFileTypes: true }).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return [];
+    });
+    const photos = entries.filter(file => file.isFile() && photoTypes.has(extname(file.name).toLowerCase()))
+      .map(file => file.name).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    return json(res, 200, photos.map(name => '/api/gallery/' + encodeURIComponent(name)));
+  }
+  const name = decodeURIComponent(reqPath.slice('/api/gallery/'.length));
+  const type = photoTypes.get(extname(name).toLowerCase());
+  if (!type || /[/\\\x00]/.test(name)) return json(res, 404, { error: 'Photo unavailable.' });
+  const file = await open(join(galleryDirectory, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    .catch(error => {
+      if (!['ENOENT', 'ELOOP'].includes(error.code)) throw error;
+      return null;
+    });
+  if (!file) return json(res, 404, { error: 'Photo unavailable.' });
+  const stat = await file.stat().catch(async error => {
+    await file.close();
+    throw error;
+  });
+  if (!stat.isFile()) {
+    await file.close();
+    return json(res, 404, { error: 'Photo unavailable.' });
+  }
+  res.writeHead(200, { 'Content-Type': type, 'Content-Length': stat.size });
+  const stream = file.createReadStream();
+  stream.on('error', error => res.destroy(error));
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
 
 function json(res, status, data) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -142,7 +184,7 @@ const server = createServer(async (req, res) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self)');
-  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; media-src 'self' blob:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
+  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; media-src 'self' blob:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
   if (secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   const path = req.url.split('?')[0];
   const now = Date.now();
@@ -183,6 +225,9 @@ const server = createServer(async (req, res) => {
       return json(res, 200, {});
     }
     if (!session || session.expires <= now) return json(res, 401, { error: 'Sign in to continue.' });
+    if (req.method === 'GET' && (path === '/api/gallery' || path.startsWith('/api/gallery/'))) {
+      return await gallery(path, res);
+    }
     expire(now);
     session.seen = now;
     if (path === '/api/state' && req.method === 'GET') {
