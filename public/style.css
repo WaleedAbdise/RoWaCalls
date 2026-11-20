@@ -112,6 +112,10 @@ button { border: 1px solid transparent; border-radius: 11px; min-height: 46px; p
 #presence-dot.online { background: #9debbb; }
 .call-card { margin-top: 18px; }
 .call-heading p { color: var(--muted); }
+.camera-test-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.camera-test-heading h2 { margin: 0; }
+#camera-test-status { margin: 10px 0; color: var(--muted); }
+#test-video { display: block; width: 100%; max-height: 280px; background: #0c0b14; border-radius: 12px; transform: scaleX(-1); }
 .stage {
   position: relative;
   background: #0c0b14;

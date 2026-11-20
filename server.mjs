@@ -29,7 +29,9 @@ const managedTurn = !!(turnKeyId && turnToken);
 const meteredApp = process.env.METERED_TURN_APP;
 const meteredKey = process.env.METERED_TURN_API_KEY;
 const meteredTurn = !!(meteredKey && /^[a-z0-9-]+$/.test(meteredApp || ''));
-if (secure && !meteredTurn && !managedTurn && (!turnUrls.some(url => url.startsWith('turns:')) || !turnSecret)) {
+const directOnly = process.env.DIRECT_ONLY === 'true';
+const stun = { urls: 'stun:stun.cloudflare.com:3478' };
+if (secure && !directOnly && !meteredTurn && !managedTurn && (!turnUrls.some(url => url.startsWith('turns:')) || !turnSecret)) {
   throw new Error('HTTPS deployment requires a configured TLS TURN relay.');
 }
 
@@ -132,6 +134,7 @@ async function body(req) {
 }
 
 async function iceServers(id) {
+  if (directOnly) return [stun];
   if (meteredTurn) {
     const url = new URL(`https://${meteredApp}.metered.live/api/v1/turn/credentials`);
     url.searchParams.set('apiKey', meteredKey);
@@ -267,10 +270,12 @@ const server = createServer(async (req, res) => {
     if (path === '/api/ice' && req.method === 'GET') {
       try {
         if (!(await quota.available())) return json(res, 429, { error: quotaMessage });
-        return json(res, 200, await iceServers(session.user));
       } catch {
-        return json(res, 503, { error: 'The call relay is unavailable. Try again shortly.' });
+        return json(res, 503, { error: 'Monthly call usage is unavailable.' });
       }
+      const servers = await iceServers(session.user).catch(() => []);
+      return json(res, 200, servers.some(server => [server?.urls].flat().includes(stun.urls))
+        ? servers : [stun, ...servers]);
     }
     if (path === '/api/logout' && req.method === 'POST') {
       if (call && call.state !== 'ended' && [call.caller, call.callee].includes(id)) endCall('Call ended.');

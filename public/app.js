@@ -17,6 +17,8 @@ let ringingMode;
 let ringGain;
 let nativeFullscreen = false;
 let galleryRequest = 0;
+let cameraTest = null;
+const videoQuality = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 } };
 
 async function api(path, data) {
   const response = await fetch('/api/' + path, data === undefined ? {
@@ -45,6 +47,7 @@ function setAccount(user) {
   el('logout').hidden = !user;
   if (!user) {
     resetGallery();
+    closeCameraTest();
     cleanup();
     incoming = null;
     renderCall();
@@ -166,9 +169,11 @@ function renderCall() {
   el('swap-video').disabled = !video || el('local-frame').hidden;
   el('filter-panel').hidden = !current?.connectedAt;
   el('camera').hidden = current?.mode !== 'video';
+  el('flip-camera').hidden = !video;
   for (const id of ['voice', 'video', 'accept', 'decline', 'hangup', 'logout']) el(id).disabled = busy;
   el('mute').disabled = !current?.stream;
-  el('camera').disabled = !current?.stream;
+  el('camera').disabled = !current?.stream || !!current.switchingCamera;
+  el('flip-camera').disabled = !current?.videoSender || !!current.switchingCamera;
   updateRing();
   if (!call) return;
   const type = call.mode === 'video' ? 'video' : 'voice';
@@ -206,6 +211,7 @@ function cleanup() {
   el('camera').setAttribute('aria-pressed', 'false');
   el('mute').textContent = 'Mute';
   el('camera').textContent = 'Turn camera off';
+  notice('camera-notice');
 }
 
 function setSwapped(swapped) {
@@ -327,37 +333,164 @@ function scheduleCutoff(call, { remainingMs, cutoffMessage }) {
   }, remainingMs);
 }
 
-async function prepare(call) {
-  if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) {
-    throw new Error('Open this page over HTTPS in a browser that supports video calls.');
-  }
-  const mediaRequest = navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    video: call.mode === 'video' && {
-      facingMode: 'user',
-      width: { ideal: 960 },
-      height: { ideal: 540 },
-      frameRate: { ideal: 24, max: 30 }
+async function capture(constraints, stillNeeded) {
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('Open ROWA Calls over HTTPS in Safari, Chrome, or another browser with camera support.');
+  let expired = false;
+  const mediaRequest = navigator.mediaDevices.getUserMedia(constraints).then(stream => {
+    if (expired || !stillNeeded()) {
+      stream.getTracks().forEach(track => track.stop());
+      throw new Error('Camera or microphone request cancelled.');
     }
-  }).then(stream => {
-    if (call !== current) stream.getTracks().forEach(track => track.stop());
     return stream;
   });
   let deadline;
   try {
-    call.stream = await Promise.race([mediaRequest, new Promise((_, reject) => {
-      deadline = setTimeout(() => reject(new Error('Device access timed out. Check the browser’s permission prompt and try again.')), 45000);
+    return await Promise.race([mediaRequest, new Promise((_, reject) => {
+      deadline = setTimeout(() => {
+        expired = true;
+        reject(new Error('Device access timed out. Check the browser’s permission prompt and try again.'));
+      }, 20000);
     })]);
   } finally {
     clearTimeout(deadline);
   }
-  if (call !== current) {
-    call.stream.getTracks().forEach(track => track.stop());
-    throw new Error('This call is no longer available.');
+}
+
+async function captureDefault(audio, video, stillNeeded) {
+  try {
+    return await capture({ audio, video: video && { ...videoQuality, facingMode: { ideal: 'user' } } }, stillNeeded);
+  } catch (error) {
+    if (!video || !stillNeeded() || !['NotReadableError', 'OverconstrainedError'].includes(error.name)) throw error;
+    return capture({ audio, video: true }, stillNeeded);
   }
+}
+
+function closeCameraTest() {
+  const old = cameraTest;
+  cameraTest = null;
+  old?.stream?.getTracks().forEach(track => track.stop());
+  el('test-video').srcObject = null;
+  el('test-video').hidden = true;
+  el('camera-test').hidden = true;
+}
+
+el('close-camera-test').onclick = closeCameraTest;
+el('test-camera').onclick = async () => {
+  if (cameraTest) return;
+  const test = {};
+  cameraTest = test;
+  el('camera-test').hidden = false;
+  el('camera-test-status').textContent = 'Checking camera permission…';
+  try {
+    test.stream = await captureDefault(false, true, () => cameraTest === test);
+    if (cameraTest !== test) return;
+    const video = el('test-video');
+    video.srcObject = test.stream;
+    video.hidden = false;
+    await video.play();
+    if (cameraTest === test) el('camera-test-status').textContent = 'Camera is working. Only you can see this preview.';
+  } catch (error) {
+    if (cameraTest === test) el('camera-test-status').textContent = describe(error);
+  }
+};
+
+async function capVideo(sender) {
+  try {
+    const parameters = sender.getParameters();
+    if (!parameters.encodings.length) return;
+    parameters.encodings[0].maxBitrate = 350000;
+    await sender.setParameters(parameters);
+  } catch {
+    // Browsers that reject the bitrate hint still use the lower capture resolution.
+  }
+}
+
+function showCallCamera(enabled) {
+  el('local').hidden = !enabled;
+  el('local-frame').hidden = !enabled;
+  if (!enabled) setSwapped(false);
+  el('camera').textContent = enabled ? 'Turn camera off' : 'Turn camera on';
+  el('camera').setAttribute('aria-pressed', String(!enabled));
+}
+
+async function changeCamera(call, flip) {
+  if (call.switchingCamera) return;
+  const previous = call.stream.getVideoTracks()[0];
+  const settings = previous?.getSettings() || {};
+  const oldDevice = settings.deviceId || call.cameraDevice;
+  const oldFacing = settings.facingMode || call.cameraFacing || 'user';
+  const mobile = !!settings.facingMode || matchMedia('(pointer: coarse)').matches;
+  const nextFacing = oldFacing === 'environment' ? 'user' : 'environment';
+  call.switchingCamera = true;
+  notice('camera-notice');
+  renderCall();
+  let nextTrack;
+  try {
+    let selection = oldDevice ? { deviceId: { exact: oldDevice } } : { facingMode: { ideal: oldFacing } };
+    if (flip) {
+      if (mobile) {
+        selection = { facingMode: { exact: nextFacing } };
+      } else {
+        const devices = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'videoinput');
+        const index = devices.findIndex(device => device.deviceId === oldDevice);
+        const other = devices.length > 1 ? devices[(index + 1) % devices.length] : null;
+        if (!other?.deviceId || other.deviceId === oldDevice) throw new Error('No second camera is available on this device.');
+        selection = { deviceId: { exact: other.deviceId } };
+      }
+    }
+    if (call !== current) return;
+    previous?.stop();
+    const stream = await capture({ video: { ...videoQuality, ...selection }, audio: false }, () => call === current);
+    [nextTrack] = stream.getVideoTracks();
+    await installCamera(call, previous, nextTrack);
+    call.cameraFacing = nextTrack.getSettings().facingMode || (flip && mobile ? nextFacing : oldFacing);
+  } catch (error) {
+    nextTrack?.stop();
+    if (call !== current) return;
+    if (previous?.readyState !== 'live') {
+      try {
+        const video = oldDevice ? { deviceId: { exact: oldDevice } } : { facingMode: { ideal: oldFacing } };
+        const restored = await capture({ video, audio: false }, () => call === current);
+        [nextTrack] = restored.getVideoTracks();
+        await installCamera(call, previous, nextTrack);
+      } catch {
+        nextTrack?.stop();
+        if (call === current) showCallCamera(false);
+      }
+    }
+    if (call === current) notice('camera-notice', flip && ['NotFoundError', 'OverconstrainedError'].includes(error.name)
+      ? 'No alternate camera was found.' : describe(error));
+  } finally {
+    call.switchingCamera = false;
+    if (call === current) renderCall();
+  }
+}
+
+async function installCamera(call, previous, track) {
+  await call.videoSender.replaceTrack(track);
+  if (call !== current) {
+    track.stop();
+    return;
+  }
+  if (previous) call.stream.removeTrack(previous);
+  call.stream.addTrack(track);
+  call.cameraDevice = track.getSettings().deviceId;
+  el('local').srcObject = call.stream;
+  showCallCamera(true);
+  void el('local').play().catch(() => {});
+  void capVideo(call.videoSender);
+}
+
+async function prepare(call) {
+  if (!window.RTCPeerConnection) throw new Error('Open this page in a browser that supports WebRTC calls.');
+  call.stream = await captureDefault(
+    { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    call.mode === 'video', () => call === current
+  );
   const iceServers = await api('ice');
   if (call !== current) throw new Error('This call is no longer available.');
   const pc = new RTCPeerConnection({ iceServers });
+  call.hasRelay = iceServers.some(server => [server.urls].flat().some(url => /^turns?:/.test(url)));
   call.pc = pc;
   call.localCandidates = [];
   call.remoteCandidates = 0;
@@ -374,6 +507,7 @@ async function prepare(call) {
   pc.onconnectionstatechange = () => {
     if (call !== current) return;
     if (pc.connectionState === 'connected') {
+      if (!call.connectedAt && call.videoSender) void capVideo(call.videoSender);
       call.connectedAt ||= Date.now();
       call.disconnectedAt = null;
       call.status = 'Connected';
@@ -385,18 +519,20 @@ async function prepare(call) {
   };
   if (call.mode === 'video') {
     el('local').srcObject = call.stream;
-    el('local').hidden = false;
-    el('local-frame').hidden = false;
+    showCallCamera(true);
     void el('local').play().catch(() => {});
   }
-  for (const track of call.stream.getTracks()) pc.addTrack(track, call.stream);
+  for (const track of call.stream.getTracks()) {
+    const sender = pc.addTrack(track, call.stream);
+    if (track.kind === 'video') call.videoSender = sender;
+  }
 }
 
 function describe(error) {
   const messages = {
-    NotAllowedError: 'Allow microphone and camera access in your browser, then try again.',
-    NotFoundError: 'Connect a microphone or camera, then try again.',
-    NotReadableError: 'Your microphone or camera is busy or unavailable.'
+    NotAllowedError: 'Allow camera and microphone access for this site in your browser settings, then try again.',
+    NotFoundError: 'No camera or microphone was found. Check that it is connected and enabled.',
+    NotReadableError: 'Close other apps or tabs using your camera or microphone, then try again.'
   };
   return messages[error.name] || error.message || 'The call could not be completed.';
 }
@@ -418,6 +554,7 @@ async function act(action) {
 }
 
 async function dial(mode, offer = null) {
+  closeCameraTest();
   const call = { id: offer?.id, mode, status: 'Waiting for device permission…' };
   current = call;
   renderCall();
@@ -490,7 +627,9 @@ async function reconcile(snapshot) {
       const expired = (!call.connectedAt && call.connectingAt && Date.now() - call.connectingAt > 30000) ||
         (call.disconnectedAt && Date.now() - call.disconnectedAt > 15000);
       if (call.pc.connectionState === 'failed' || expired) {
-        await act(() => hangup('The connection dropped or could not be established. Try calling again.'));
+        const message = call.hasRelay ? 'The call could not connect. Check your network and whether the relay quota is available.'
+          : 'A direct connection could not be made. These networks may require an active call relay.';
+        await act(() => hangup(message));
       } else if (call.pc.connectionState === 'connected') {
         const seconds = Math.floor((Date.now() - call.connectedAt) / 1000);
         call.status = `Connected · ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -581,17 +720,19 @@ el('mute').onclick = () => {
   el('mute').setAttribute('aria-pressed', String(!track.enabled));
 };
 el('camera').onclick = () => {
-  const track = current?.stream?.getVideoTracks()[0];
-  if (!track) return;
+  const call = current;
+  if (!call?.videoSender) return;
+  const track = call.stream.getVideoTracks()[0];
+  if (track?.readyState !== 'live') return void changeCamera(call, false);
   track.enabled = !track.enabled;
-  el('local').hidden = !track.enabled;
-  el('local-frame').hidden = !track.enabled;
-  if (!track.enabled) setSwapped(false);
-  el('camera').textContent = track.enabled ? 'Turn camera off' : 'Turn camera on';
-  el('camera').setAttribute('aria-pressed', String(!track.enabled));
+  showCallCamera(track.enabled);
   renderCall();
 };
+el('flip-camera').onclick = () => {
+  if (current?.videoSender) void changeCamera(current, true);
+};
 window.addEventListener('pagehide', () => {
+  closeCameraTest();
   const call = current;
   cleanup();
   if (call?.id) void send(call, 'end').catch(() => {});

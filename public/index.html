@@ -61,10 +61,19 @@
             </div>
           </div>
           <div id="dial" class="controls">
+            <button id="test-camera" class="quiet">Test camera</button>
             <button id="voice" class="secondary">Voice call</button>
             <button id="video" class="primary">Video call</button>
           </div>
         </div>
+        <section id="camera-test" class="card call-card" hidden aria-labelledby="camera-test-title">
+          <div class="camera-test-heading">
+            <h2 id="camera-test-title">Camera preview</h2>
+            <button id="close-camera-test" class="quiet">Close preview</button>
+          </div>
+          <p id="camera-test-status" role="status"></p>
+          <video id="test-video" autoplay muted playsinline hidden aria-label="Current camera preview"></video>
+        </section>
         <section id="call-panel" class="card call-card" hidden aria-label="Call controls">
           <div class="call-heading">
             <h2 id="call-title"></h2>
@@ -106,9 +115,11 @@
           <div id="active-controls" class="controls" hidden>
             <button id="mute" class="secondary" aria-pressed="false">Mute</button>
             <button id="camera" class="secondary" aria-pressed="false" hidden>Turn camera off</button>
+            <button id="flip-camera" class="secondary" hidden>Switch camera</button>
             <button id="play" class="secondary" hidden>Enable sound</button>
             <button id="hangup" class="danger">End call</button>
           </div>
+          <p id="camera-notice" class="notice" role="status" hidden></p>
         </section>
         <p id="room-notice" class="notice" role="status" hidden></p>
         <div class="ringer-row">
