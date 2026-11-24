@@ -31,6 +31,7 @@ async function api(path, data) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
+    signal: AbortSignal.timeout(10000),
     keepalive: path === 'logout' || data.action === 'end'
   });
   const result = await response.json();
@@ -393,8 +394,11 @@ function send(call, action, data = {}) {
   return api('call', { action, id: call.id, ...data });
 }
 
-function scheduleCutoff(call, { remainingMs, cutoffMessage }) {
-  if (call.cutoff || !Number.isFinite(remainingMs)) return;
+function scheduleCutoff(call, { deadline, remainingMs, cutoffMessage }) {
+  if (!Number.isFinite(remainingMs) || (call.cutoff && call.deadline === deadline && call.cutoffMessage === cutoffMessage)) return;
+  clearTimeout(call.cutoff);
+  call.deadline = deadline;
+  call.cutoffMessage = cutoffMessage;
   call.cutoff = setTimeout(() => {
     if (call !== current) return;
     cleanup();
@@ -560,13 +564,19 @@ async function prepare(call) {
   const iceServers = await api('ice');
   if (call !== current) throw new Error('This call is no longer available.');
   const pc = new RTCPeerConnection({ iceServers });
-  call.hasRelay = iceServers.some(server => [server.urls].flat().some(url => /^turns?:/.test(url)));
+  call.hasRelay = includesRelay(iceServers);
+  call.refreshRelayAt = Date.now() + 3 * 3600000;
   call.pc = pc;
   call.localCandidates = [];
   call.remoteCandidates = 0;
+  call.round = 0;
+  call.descriptionRound = -1;
   call.remoteStream = new MediaStream();
   pc.onicecandidate = ({ candidate }) => {
-    if (candidate && call === current) call.localCandidates.push(candidate.toJSON());
+    if (!candidate || call !== current) return;
+    const ufrag = candidate.usernameFragment;
+    if (ufrag && !pc.localDescription?.sdp.split(/\r?\n/).includes('a=ice-ufrag:' + ufrag)) return;
+    call.localCandidates.push(candidate.toJSON());
   };
   pc.ontrack = ({ track }) => {
     if (call !== current) return;
@@ -574,19 +584,21 @@ async function prepare(call) {
     el(call.mode === 'video' ? 'remote' : 'remote-audio').srcObject = call.remoteStream;
     void playRemote();
   };
-  pc.onconnectionstatechange = () => {
+  function connectionChanged() {
     if (call !== current) return;
-    if (pc.connectionState === 'connected') {
+    if (mediaConnected(pc)) {
       if (!call.connectedAt && call.videoSender) void capVideo(call.videoSender);
       call.connectedAt ||= Date.now();
-      call.disconnectedAt = null;
+      call.unstableSince = null;
       call.status = 'Connected';
-    } else if (pc.connectionState === 'disconnected') {
-      call.disconnectedAt ||= Date.now();
-      call.status = 'Reconnecting…';
+    } else if (call.connectedAt || mediaInterrupted(pc)) {
+      call.unstableSince ||= Date.now();
+      if (call.connectedAt) call.status = 'Reconnecting…';
     }
     renderCall();
-  };
+  }
+  pc.onconnectionstatechange = connectionChanged;
+  pc.oniceconnectionstatechange = connectionChanged;
   if (call.mode === 'video') {
     el('local').srcObject = call.stream;
     showCallCamera(true);
@@ -625,13 +637,14 @@ async function act(action) {
 
 async function dial(mode, offer = null) {
   closeCameraTest();
-  const call = { id: offer?.id, mode, status: 'Waiting for device permission…' };
+  const call = { id: offer?.id, outgoing: !offer, mode, status: 'Waiting for device permission…' };
   current = call;
   renderCall();
   try {
     await prepare(call);
     if (offer) {
       await call.pc.setRemoteDescription(offer.offer);
+      call.descriptionRound = 0;
       await call.pc.setLocalDescription(await call.pc.createAnswer());
       const accepted = await send(call, 'accept', { sdp: call.pc.localDescription.sdp });
       scheduleCutoff(call, accepted);
@@ -664,6 +677,113 @@ async function hangup(message) {
   notice('room-notice', message || 'Call ended.');
 }
 
+function includesRelay(servers) {
+  return servers.some(server => [server?.urls].flat().some(url => /^turns?:/.test(url)));
+}
+
+function mediaInterrupted(pc) {
+  return ['failed', 'disconnected'].includes(pc.connectionState) ||
+    ['failed', 'disconnected'].includes(pc.iceConnectionState);
+}
+
+function mediaConnected(pc) {
+  return pc.connectionState === 'connected' && !mediaInterrupted(pc);
+}
+
+async function refreshIceConfig(call, required) {
+  const iceServers = await api('ice?call=' + encodeURIComponent(call.id)).catch(() => null);
+  if (call !== current) return false;
+  const hasRelay = iceServers && includesRelay(iceServers);
+  if (!iceServers || (call.hasRelay && !hasRelay)) {
+    if (required) call.refreshRelayAt = Date.now() + 30000;
+    return !required;
+  }
+  call.pc.setConfiguration({ ...call.pc.getConfiguration(), iceServers });
+  call.hasRelay = hasRelay;
+  call.refreshRelayAt = Date.now() + 3 * 3600000;
+  return true;
+}
+
+async function publishSignal(call) {
+  const { action, round, sdp } = call.pendingSignal;
+  await send(call, action, { round, sdp });
+  call.pendingSignal = null;
+}
+
+async function reconcileSignal(call, remote) {
+  const pc = call.pc;
+  if (call.pendingSignal) {
+    await publishSignal(call);
+    return false;
+  }
+
+  if (!call.outgoing && remote.round > call.round) {
+    if (!await refreshIceConfig(call, false) || call !== current) return false;
+    call.localCandidates = [];
+    call.remoteCandidates = 0;
+    if (call.descriptionRound !== remote.round) {
+      await pc.setRemoteDescription(remote.offer);
+      call.descriptionRound = remote.round;
+    }
+    const answer = await pc.createAnswer();
+    if (call !== current) return false;
+    await pc.setLocalDescription(answer);
+    call.round = remote.round;
+    call.pendingSignal = { action: 'restart-answer', round: call.round, sdp: pc.localDescription.sdp };
+    await publishSignal(call);
+    return false;
+  }
+
+  if (call.round !== remote.round || call !== current) return false;
+  if (call.outgoing && remote.answer && call.descriptionRound !== remote.round) {
+    await pc.setRemoteDescription(remote.answer);
+    call.descriptionRound = remote.round;
+  }
+  if (call.descriptionRound === remote.round) {
+    while (call.remoteCandidates < remote.candidates.length && call === current) {
+      const candidate = remote.candidates[call.remoteCandidates++];
+      await pc.addIceCandidate(candidate).catch(() => {});
+    }
+  }
+  if (call.localCandidates.length && call === current) {
+    const candidates = call.localCandidates.slice(0, 16);
+    await send(call, 'candidates', { round: call.round, candidates });
+    call.localCandidates.splice(0, candidates.length);
+  }
+
+  const now = Date.now();
+  if (call !== current || remote.state !== 'active' || pc.signalingState !== 'stable' ||
+      now < (call.nextRestartAt || 0)) return true;
+
+  const troubledSince = call.connectedAt ? call.unstableSince : call.connectingAt;
+  const retry = !mediaConnected(pc) && troubledSince &&
+    (pc.iceConnectionState === 'failed' || now - troubledSince >= (call.connectedAt ? 3500 : 12000));
+  const refresh = call.hasRelay && now >= call.refreshRelayAt;
+  if (!retry && !refresh && !remote.restartRequested) return true;
+
+  call.nextRestartAt = now + 16000;
+  if (retry) {
+    call.status = 'Reconnecting…';
+    renderCall();
+  }
+  if (!call.outgoing) {
+    await send(call, 'request-restart', { round: call.round });
+    return true;
+  }
+
+  const refreshOnly = refresh && !retry && !remote.restartRequested;
+  if (!await refreshIceConfig(call, refreshOnly) || call !== current) return true;
+  const offer = await pc.createOffer({ iceRestart: true });
+  if (call !== current) return false;
+  call.localCandidates = [];
+  call.remoteCandidates = 0;
+  await pc.setLocalDescription(offer);
+  call.round++;
+  call.pendingSignal = { action: 'restart', round: call.round, sdp: pc.localDescription.sdp };
+  await publishSignal(call);
+  return false;
+}
+
 async function reconcile(snapshot) {
   const remote = snapshot.call;
   if (current) {
@@ -677,30 +797,14 @@ async function reconcile(snapshot) {
       scheduleCutoff(call, remote);
       call.partnerFilter = remote.partnerFilter;
       drawFilters();
-      if (remote.answer && !call.pc.remoteDescription) {
-        await call.pc.setRemoteDescription(remote.answer);
-        call.connectingAt = Date.now();
-        call.status = 'Connecting…';
-      }
-      if (call !== current) return;
-      if (call.pc.remoteDescription) {
-        while (call.remoteCandidates < remote.candidates.length && call === current) {
-          const candidate = remote.candidates[call.remoteCandidates++];
-          await call.pc.addIceCandidate(candidate).catch(() => {});
-        }
-      }
-      while (call.localCandidates.length && call === current) {
-        await send(call, 'candidate', { candidate: call.localCandidates[0] });
-        call.localCandidates.shift();
-      }
-      if (call !== current) return;
-      const expired = (!call.connectedAt && call.connectingAt && Date.now() - call.connectingAt > 30000) ||
-        (call.disconnectedAt && Date.now() - call.disconnectedAt > 15000);
-      if (call.pc.connectionState === 'failed' || expired) {
-        const message = call.hasRelay ? 'The call could not connect. Check your network and whether the relay quota is available.'
+      if (remote.state === 'active' && !call.connectingAt) call.connectingAt = Date.now();
+      const now = Date.now();
+      const troubleStarted = call.connectedAt ? call.unstableSince : call.connectingAt;
+      if (!mediaConnected(call.pc) && troubleStarted && now - troubleStarted > 95000) {
+        const message = call.hasRelay ? 'Could not connect after retrying. Check the network and call again.'
           : 'A direct connection could not be made. These networks may require an active call relay.';
         await act(() => hangup(message));
-      } else if (call.pc.connectionState === 'connected') {
+      } else if (await reconcileSignal(call, remote) && call === current && mediaConnected(call.pc) && call.connectedAt) {
         const seconds = Math.floor((Date.now() - call.connectedAt) / 1000);
         call.status = `Connected · ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
       }
@@ -741,7 +845,7 @@ async function poll() {
     else if (error.status !== 409) {
       el('presence-dot').classList.remove('online');
       el('presence').textContent = 'Checking connection…';
-      if (!busy && Date.now() - lastPoll > 30000 && (current || incoming)) {
+      if (!busy && Date.now() - lastPoll > (current?.connectedAt ? 120000 : 45000) && (current || incoming)) {
         cleanup();
         incoming = null;
         notice('room-notice', 'Lost connection to the call room.');
@@ -825,8 +929,12 @@ setInterval(() => {
   if (heartUsage?.runningMs && !document.hidden) renderHeart();
 }, 1000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) void refreshHeart();
+  if (!document.hidden) {
+    void refreshHeart();
+    void poll();
+  }
 });
+window.addEventListener('online', () => void poll());
 try {
   const snapshot = await api('state');
   if (!account) setAccount(snapshot.user);

@@ -1,5 +1,5 @@
 const limit = 4500 * 60 * 1000;
-const maxCall = 60 * 60 * 1000;
+const reservationWindow = 60 * 60 * 1000;
 export const quotaMessage = 'Cuties, I think you’ve talked too much this month. That’s enough! Go do some work, you farigh unemployed log. 🦭💕 Calling resets on the first of next month (UTC).';
 
 const reserveScript = `
@@ -12,6 +12,23 @@ redis.call('INCRBY', KEYS[1], duration)
 redis.call('SET', KEYS[2], duration, 'EX', 172800)
 redis.call('EXPIRE', KEYS[1], 3456000)
 return {duration, duration == remaining and 1 or 0}
+`;
+
+const extendScript = `
+local reserved = tonumber(redis.call('GET', KEYS[2]) or '0')
+local expected = tonumber(ARGV[1])
+local used = tonumber(redis.call('GET', KEYS[1]) or '0')
+local limit = tonumber(ARGV[2])
+if reserved == 0 or reserved < expected then return {-1, 0} end
+if reserved > expected then return {reserved - expected, used >= limit and 1 or 0} end
+local remaining = math.max(0, limit - used)
+local extra = math.min(remaining, tonumber(ARGV[3]))
+if extra > 0 then
+  redis.call('INCRBY', KEYS[1], extra)
+  redis.call('SET', KEYS[2], reserved + extra, 'EX', 172800)
+  redis.call('EXPIRE', KEYS[1], 3456000)
+end
+return {extra, extra == remaining and 1 or 0}
 `;
 
 const releaseScript = `
@@ -34,6 +51,21 @@ export function createQuota(secure) {
 
   const monthAt = now => new Date(now).toISOString().slice(0, 7);
   const key = month => `rowa:calls:{${month}}:used`;
+  function monthEnd(now) {
+    const date = new Date(now);
+    return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+  }
+
+  function makeLease(lease, deadline, exhausted) {
+    const renewable = !exhausted && deadline < monthEnd(lease.start);
+    return {
+      ...lease, deadline, renewable,
+      reason: exhausted ? quotaMessage : renewable
+        ? 'Could not extend this call. Please call again.'
+        : 'It’s a new month. Call again to start using this month’s minutes.'
+    };
+  }
+
   function useLocal(month) {
     if (localMonth !== month) {
       localMonth = month;
@@ -82,9 +114,7 @@ export function createQuota(secure) {
     },
     async reserve(id, now = Date.now()) {
       const month = monthAt(now);
-      const date = new Date(now);
-      const rollover = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
-      const requested = Math.min(maxCall, rollover - now);
+      const requested = Math.min(reservationWindow, monthEnd(now) - now);
       const reservation = `rowa:calls:{${month}}:${id}`;
       let duration;
       let exhausted;
@@ -102,8 +132,28 @@ export function createQuota(secure) {
       }
       if (!duration) return null;
       if (!endpoint) localUsed += duration;
-      return { month, reservation, start: now, deadline: now + duration,
-        reason: exhausted ? quotaMessage : 'This call reached its time limit. You can call again if time remains.' };
+      return makeLease({ month, reservation, start: now }, now + duration, exhausted);
+    },
+    async extend(lease) {
+      const requested = Math.min(reservationWindow, monthEnd(lease.start) - lease.deadline);
+      if (!lease.renewable || requested <= 0) return lease;
+      let extra;
+      let exhausted;
+      if (endpoint) {
+        [extra, exhausted] = await redis('EVAL', extendScript, 2, key(lease.month), lease.reservation,
+          lease.deadline - lease.start, limit, requested);
+        extra = Number(extra);
+        exhausted = Number(exhausted);
+      } else {
+        const remaining = Math.max(0, limit - useLocal(lease.month));
+        extra = Math.min(requested, remaining);
+        exhausted = extra === remaining;
+      }
+      if (!Number.isSafeInteger(extra) || extra < 0 || extra > requested) {
+        throw new Error('Invalid monthly usage extension.');
+      }
+      if (!endpoint) localUsed += extra;
+      return makeLease(lease, lease.deadline + extra, exhausted);
     },
     async release(lease, now = Date.now()) {
       const used = Math.max(0, Math.min(lease.deadline, now) - lease.start);

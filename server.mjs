@@ -31,6 +31,7 @@ const meteredKey = process.env.METERED_TURN_API_KEY;
 const meteredTurn = !!(meteredKey && /^[a-z0-9-]+$/.test(meteredApp || ''));
 const directOnly = process.env.DIRECT_ONLY === 'true';
 const stun = { urls: 'stun:stun.cloudflare.com:3478' };
+const turnLifetime = 4 * 3600;
 if (secure && !directOnly && !meteredTurn && !managedTurn && (!turnUrls.some(url => url.startsWith('turns:')) || !turnSecret)) {
   throw new Error('HTTPS deployment requires a configured TLS TURN relay.');
 }
@@ -137,6 +138,18 @@ async function body(req) {
 
 async function iceServers(id) {
   if (directOnly) return [stun];
+  if (managedTurn) {
+    const url = `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(turnKeyId)}/credentials/generate-ice-servers`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${turnToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl: turnLifetime }),
+      signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) throw new Error('TURN credentials unavailable.');
+    const data = await response.json();
+    return requireTlsRelay(data.iceServers);
+  }
   if (meteredTurn) {
     const url = new URL(`https://${meteredApp}.metered.live/api/v1/turn/credentials`);
     url.searchParams.set('apiKey', meteredKey);
@@ -144,20 +157,8 @@ async function iceServers(id) {
     if (!response.ok) throw new Error('TURN credentials unavailable.');
     return requireTlsRelay(await response.json());
   }
-  if (managedTurn) {
-    const url = `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(turnKeyId)}/credentials/generate-ice-servers`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${turnToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ttl: 3600 }),
-      signal: AbortSignal.timeout(5000)
-    });
-    if (!response.ok) throw new Error('TURN credentials unavailable.');
-    const data = await response.json();
-    return requireTlsRelay(data.iceServers);
-  }
   if (!turnUrls.length || !turnSecret) return [];
-  const username = `${Math.floor(Date.now() / 1000) + 3600}:${id}`;
+  const username = `${Math.floor(Date.now() / 1000) + turnLifetime}:${id}`;
   const credential = createHmac('sha1', turnSecret).update(username).digest('base64');
   return [{ urls: turnUrls, username, credential }];
 }
@@ -173,14 +174,33 @@ function expire(now) {
   if (!call) return;
   const { caller, callee, state, updated } = call;
   const missing = [caller, callee].filter(Boolean).some(id =>
-    now - (sessions.get(id)?.seen || 0) > 30000);
+    now - (sessions.get(id)?.seen || 0) > (state === 'active' ? 120000 : 45000));
   if (state === 'ended') {
     if (now - updated > 10000) call = null;
   } else if (call.lease && now >= call.lease.deadline) {
     endCall(call.lease.reason);
   } else if (missing || (state === 'ringing' && now - updated > 45000)) {
-    endCall(missing ? 'Connection lost.' : 'No answer.');
+    endCall(missing ? 'Your partner lost connection to the call room.' : 'No answer.');
+  } else if (state === 'active' && call.lease.renewable && call.lease.deadline - now <= 5 * 60000 &&
+      now >= (call.nextRenewal || 0)) {
+    call.nextRenewal = now + 15000;
+    void renewCall(call);
   }
+}
+
+async function renewCall(activeCall) {
+  try {
+    const lease = await quota.extend(activeCall.lease);
+    if (call === activeCall) activeCall.lease = lease;
+  } catch {
+    console.error('Could not extend the call time reservation. Will retry.');
+  }
+}
+
+function callTime(lease, now) {
+  return lease ? {
+    remainingMs: Math.max(0, lease.deadline - now), deadline: lease.deadline, cutoffMessage: lease.reason
+  } : {};
 }
 
 function endCall(reason) {
@@ -203,12 +223,12 @@ function snapshot(id, session, now) {
     const outgoing = call.caller === id;
     current = {
       id: call.id, state: call.state, outgoing, mode: call.mode,
+      round: call.round, restartRequested: outgoing ? call.restartRequested : undefined,
       offer: outgoing ? undefined : call.offer,
       answer: outgoing ? call.answer : undefined,
       candidates: (outgoing ? call.calleeCandidates : call.callerCandidates) || [],
       partnerFilter: outgoing ? call.calleeFilter : call.callerFilter,
-      remainingMs: call.lease ? Math.max(0, call.lease.deadline - now) : undefined,
-      cutoffMessage: call.lease?.reason,
+      ...callTime(call.lease, now),
       reason: call.reason
     };
   }
@@ -270,8 +290,8 @@ const server = createServer(async (req, res) => {
     if (req.method === 'GET' && (path === '/api/gallery' || path.startsWith('/api/gallery/'))) {
       return await gallery(path, res);
     }
-    expire(now);
     session.seen = now;
+    expire(now);
     if (path === '/api/state' && req.method === 'GET') {
       return json(res, 200, { user: session.user, ...snapshot(id, session, now) });
     }
@@ -287,7 +307,12 @@ const server = createServer(async (req, res) => {
     }
     if (path === '/api/ice' && req.method === 'GET') {
       try {
-        if (!(await quota.available())) return json(res, 429, { error: quotaMessage });
+        const requestedCall = new URL(req.url, origin).searchParams.get('call');
+        const renewing = call?.state === 'active' && call.id === requestedCall && [call.caller, call.callee].includes(id);
+        if (!renewing) {
+          await Promise.all(pendingRefunds);
+          if (!(await quota.available())) return json(res, 429, { error: quotaMessage });
+        }
       } catch {
         return json(res, 503, { error: 'Monthly call usage is unavailable.' });
       }
@@ -307,6 +332,7 @@ const server = createServer(async (req, res) => {
     if (!sessions.has(id)) return json(res, 401, { error: 'Sign in to continue.' });
     const conflict = () => json(res, 409, { error: 'This call is no longer available.' });
     if (data.action === 'start') {
+      await Promise.all(pendingRefunds);
       const available = await quota.available().catch(() => null);
       if (!available) {
         return json(res, available === false ? 429 : 503, { error: available === false ? quotaMessage : 'Monthly call usage is unavailable.' });
@@ -314,7 +340,7 @@ const server = createServer(async (req, res) => {
       if (call && call.state !== 'ended') return json(res, 409, { error: 'A call is already in progress.' });
       if (!['voice', 'video'].includes(data.mode) || typeof data.sdp !== 'string') throw new Error('Invalid offer.');
       call = {
-        id: randomUUID(), caller: id, callee: null, mode: data.mode, state: 'ringing',
+        id: randomUUID(), caller: id, callee: null, mode: data.mode, state: 'ringing', round: 0,
         offer: { type: 'offer', sdp: data.sdp }, callerCandidates: [], calleeCandidates: [], updated: Date.now()
       };
       return json(res, 200, { id: call.id });
@@ -348,9 +374,7 @@ const server = createServer(async (req, res) => {
       call.state = 'active';
       call.lease = lease;
       call.updated = Date.now();
-      return json(res, 200, {
-        remainingMs: Math.max(0, lease.deadline - Date.now()), cutoffMessage: lease.reason
-      });
+      return json(res, 200, callTime(lease, Date.now()));
     } else if (data.action === 'decline' && invited) {
       call.callee = id;
       endCall('Call declined.');
@@ -362,10 +386,32 @@ const server = createServer(async (req, res) => {
         return json(res, 400, { error: 'Choose a video filter from the list.' });
       }
       call[isCaller ? 'callerFilter' : 'calleeFilter'] = data.filter;
-    } else if (data.action === 'candidate' && (isCaller || isCallee)) {
+    } else if (data.action === 'request-restart' && isCallee && call.state === 'active') {
+      if (data.round === call.round && call.answer) call.restartRequested = true;
+    } else if (data.action === 'restart' && isCaller && call.state === 'active') {
+      if (data.round === call.round && call.offer.sdp === data.sdp) return json(res, 200, {});
+      if (data.round !== call.round + 1 || !call.answer || typeof data.sdp !== 'string') return conflict();
+      call.round = data.round;
+      call.offer = { type: 'offer', sdp: data.sdp };
+      call.answer = null;
+      call.restartRequested = false;
+      call.callerCandidates = [];
+      call.calleeCandidates = [];
+    } else if (data.action === 'restart-answer' && isCallee && call.state === 'active') {
+      if (data.round !== call.round || call.round === 0 || typeof data.sdp !== 'string') return conflict();
+      if (call.answer && call.answer.sdp !== data.sdp) return conflict();
+      call.answer = { type: 'answer', sdp: data.sdp };
+    } else if (['candidate', 'candidates'].includes(data.action) && (isCaller || isCallee)) {
+      if ((data.round ?? 0) !== call.round) return conflict();
+      const batch = data.action === 'candidate' ? [data.candidate] : data.candidates;
+      if (!Array.isArray(batch) || batch.length > 16 ||
+          batch.some(candidate => typeof candidate?.candidate !== 'string')) throw new Error('Invalid ICE candidates.');
       const list = isCaller ? call.callerCandidates : call.calleeCandidates;
-      if (typeof data.candidate?.candidate !== 'string' || list.length >= 128) throw new Error('Invalid ICE candidate.');
-      list.push(data.candidate);
+      for (const candidate of batch) {
+        const duplicate = list.some(existing => existing.candidate === candidate.candidate &&
+          existing.sdpMid === candidate.sdpMid && existing.sdpMLineIndex === candidate.sdpMLineIndex);
+        if (!duplicate && list.length < 256) list.push(candidate);
+      }
     } else {
       return conflict();
     }
