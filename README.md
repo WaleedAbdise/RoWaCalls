@@ -33,7 +33,7 @@ Both people need the same HTTPS URL. Use one always-on Node process behind an HT
 
 ### Monthly cutoff
 
-Both accounts use the same 5,000-minute monthly call allowance because every accepted call uses one minute from each account per minute elapsed. It resets at midnight UTC on the first of each month. Individual calls can run for up to one hour, or until the month ends or the allowance runs out. Unused reserved time is returned when a call ends normally. A server crash or database interruption can leave reserved time counted against the allowance. Hosted calls use Redis so restarts cannot reset the counter. A local test without Redis keeps the counter in memory.
+Both accounts use the same 4,500-minute monthly call allowance because every accepted call uses one minute from each account per minute elapsed. It resets at midnight UTC on the first of each month. Individual calls can run for up to one hour, or until the month ends or the allowance runs out. Unused reserved time is returned when a call ends normally. A server crash or database interruption can leave reserved time counted against the allowance. Hosted calls use Redis so restarts cannot reset the counter. A local test without Redis keeps the counter in memory.
 
 This app cutoff is independent of the provider's bandwidth allowance. Cloudflare Realtime TURN meters data transfer and its standard checkout authorizes overages. The optional Cloudflare relay settings, `CLOUDFLARE_TURN_KEY_ID` and `CLOUDFLARE_TURN_API_TOKEN`, are for deployments that accept those billing terms.
 

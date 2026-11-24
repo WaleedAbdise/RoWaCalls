@@ -1,16 +1,17 @@
-const limit = 5000 * 60 * 1000;
+const limit = 4500 * 60 * 1000;
 const maxCall = 60 * 60 * 1000;
-export const quotaMessage = 'Monthly call limit reached. Calling resets on the first of next month (UTC).';
+export const quotaMessage = 'Cuties, I think you’ve talked too much this month. That’s enough! Go do some work, you farigh unemployed log. 🦭💕 Calling resets on the first of next month (UTC).';
 
 const reserveScript = `
-if redis.call('EXISTS', KEYS[2]) == 1 then return -1 end
+if redis.call('EXISTS', KEYS[2]) == 1 then return {-1, 0} end
 local used = tonumber(redis.call('GET', KEYS[1]) or '0')
-local duration = math.min(tonumber(ARGV[1]) - used, tonumber(ARGV[2]))
-if duration <= 0 then return 0 end
+local remaining = tonumber(ARGV[1]) - used
+local duration = math.min(remaining, tonumber(ARGV[2]))
+if duration <= 0 then return {0, 1} end
 redis.call('INCRBY', KEYS[1], duration)
 redis.call('SET', KEYS[2], duration, 'EX', 172800)
 redis.call('EXPIRE', KEYS[1], 3456000)
-return duration
+return {duration, duration == remaining and 1 or 0}
 `;
 
 const releaseScript = `
@@ -68,16 +69,24 @@ export function createQuota(secure) {
       const rollover = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
       const requested = Math.min(maxCall, rollover - now);
       const reservation = `rowa:calls:{${month}}:${id}`;
-      const duration = endpoint
-        ? Number(await redis('EVAL', reserveScript, 2, key(month), reservation, limit, requested))
-        : Math.min(limit - useLocal(month), requested);
+      let duration;
+      let exhausted;
+      if (endpoint) {
+        [duration, exhausted] = await redis('EVAL', reserveScript, 2, key(month), reservation, limit, requested);
+        duration = Number(duration);
+        exhausted = Number(exhausted);
+      } else {
+        const remaining = Math.max(0, limit - useLocal(month));
+        duration = Math.min(remaining, requested);
+        exhausted = duration === remaining;
+      }
       if (!Number.isSafeInteger(duration) || duration < 0 || duration > requested) {
         throw new Error('Invalid monthly usage reservation.');
       }
       if (!duration) return null;
       if (!endpoint) localUsed += duration;
       return { month, reservation, start: now, deadline: now + duration,
-        reason: duration < requested ? quotaMessage : 'This call reached its time limit. You can call again if time remains.' };
+        reason: exhausted ? quotaMessage : 'This call reached its time limit. You can call again if time remains.' };
     },
     async release(lease, now = Date.now()) {
       const used = Math.max(0, Math.min(lease.deadline, now) - lease.start);
