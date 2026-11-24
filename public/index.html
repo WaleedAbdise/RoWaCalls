@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#231426">
+  <meta name="theme-color" content="#fff8f5">
   <meta name="description" content="Private voice and video calls for Waleed and Roha.">
   <title>ROWA Calls</title>
   <link rel="stylesheet" href="/style.css">
@@ -24,14 +24,17 @@
         <div class="intro">
           <p class="route">UNITED ARAB EMIRATES <span aria-hidden="true">♡</span> PAKISTAN</p>
           <h1 id="login-title">My favorite<br><em>hello.</em></h1>
-          <p class="intro-copy">A little corner of the world for Waleed Abdullah 🦭♂️ and Roha Nadeem 🦭💕.</p>
+          <p class="intro-copy">A little corner of the world for <span class="seal-name">Waleed Abdullah 🦭♂️</span> and <span class="seal-name">Roha Nadeem 🦭💕</span>.</p>
           <div class="orbit-art" aria-hidden="true">
             <span class="orbit orbit-one"></span><span class="orbit orbit-two"></span>
+            <span class="art-sparkle art-sparkle-left">✦</span>
             <span class="art-avatar art-w">🦭</span><span class="art-star">♥</span><span class="art-avatar art-r">🦭</span>
+            <span class="art-sparkle art-sparkle-right">✧</span>
           </div>
         </div>
 
         <form id="login-form" class="card login-card">
+          <span class="login-seal" aria-hidden="true">♥</span>
           <h2>Sign in</h2>
           <p>Choose your name and enter your access password.</p>
           <label for="user">Account</label>
@@ -49,7 +52,7 @@
       <section id="room" hidden aria-labelledby="room-title">
         <div class="room-heading">
           <p class="route">UNITED ARAB EMIRATES <span aria-hidden="true">♡</span> PAKISTAN</p>
-          <h1 id="room-title">A little closer<span>.</span></h1>
+          <h1 id="room-title">A little <em>closer.</em></h1>
           <p id="welcome"></p>
         </div>
         <div class="card contact-card">
@@ -127,14 +130,17 @@
           <button id="enable-ringer" class="quiet">Enable ringer</button>
         </div>
         <section class="card conversation-heart" aria-labelledby="heart-title">
-          <div class="heart-shape" id="heart-meter" role="meter" aria-labelledby="heart-title"
-               aria-valuemin="0" aria-valuemax="4500" aria-valuenow="0" aria-valuetext="Loading this month’s call time">
-            <div class="heart-liquid" id="heart-liquid"></div>
+          <div class="heart-art">
+            <div class="heart-shape" id="heart-meter" role="meter" aria-labelledby="heart-title"
+                 aria-valuemin="0" aria-valuemax="1000" aria-valuenow="0" aria-valuetext="Loading this month’s call time">
+              <div class="heart-liquid" id="heart-liquid"></div>
+            </div>
           </div>
           <div>
             <h2 id="heart-title">Time together this month</h2>
             <p class="heart-minutes" id="heart-minutes">Checking call time…</p>
-            <p class="heart-caption">Every minute together counts once here. ♡</p>
+            <p class="heart-caption" id="heart-milestone">1,000-minute heart milestone</p>
+            <p class="heart-cap" id="heart-cap" hidden>Calls reset monthly at 4,500 minutes.</p>
           </div>
         </section>
         <section class="gallery" aria-labelledby="gallery-title">
@@ -149,6 +155,13 @@
         </section>
       </section>
     </main>
+    <dialog id="photo-viewer" aria-labelledby="photo-caption">
+      <form method="dialog"><button class="quiet" type="submit">Close photo</button></form>
+      <figure>
+        <img id="photo-full" alt="">
+        <figcaption id="photo-caption"></figcaption>
+      </figure>
+    </dialog>
     <footer><span>ROWA Calls</span><span>Waleed <span class="footer-heart" aria-hidden="true">♥</span> Roha</span></footer>
   </div>
 </body>

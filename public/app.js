@@ -65,6 +65,7 @@ function setAccount(user) {
   partner = names[partnerId];
   el('partner').textContent = `${partner} ${seals[partnerId]}`;
   el('avatar').textContent = '🦭';
+  el('avatar').dataset.partner = partnerId;
   el('welcome').textContent = `Signed in as ${names[user]} ${seals[user]}`;
   void loadGallery();
   void refreshHeart();
@@ -75,16 +76,22 @@ function renderHeart() {
   const estimate = data ? Math.min(data.runningMs, Math.max(0, performance.now() - data.receivedAt)) : 0;
   const used = data ? Math.min(data.limitMs, data.usedMs + estimate) : 0;
   const minutes = Math.floor(used / minuteMs);
+  const milestone = minutes >= 3000 ? 5000 : minutes >= 1000 ? 3000 : 1000;
   const meter = el('heart-meter');
-  el('heart-liquid').style.setProperty('--fill', data ? `${100 * used / data.limitMs}%` : '0%');
+  el('heart-liquid').style.setProperty('--fill', `${Math.min(100, 100 * used / (milestone * minuteMs))}%`);
+  el('heart-milestone').textContent = `${milestone.toLocaleString()}-minute heart milestone`;
+  el('heart-cap').hidden = !data || milestone <= data.limitMs / minuteMs;
+  if (data) {
+    el('heart-cap').textContent = `Monthly call limit · ${(data.limitMs / minuteMs).toLocaleString()} minutes`;
+  }
   el('heart-minutes').textContent = data
     ? `${minutes.toLocaleString()} ${minutes === 1 ? 'minute' : 'minutes'}`
     : 'Checking call time…';
   meter.setAttribute('aria-valuenow', String(minutes));
   meter.setAttribute('aria-valuetext', data
-    ? `${minutes} of ${data.limitMs / minuteMs} shared minutes`
+    ? `${minutes} shared minutes toward the ${milestone}-minute heart milestone`
     : 'Loading this month’s call time');
-  if (data) meter.setAttribute('aria-valuemax', String(data.limitMs / minuteMs));
+  meter.setAttribute('aria-valuemax', String(milestone));
 }
 
 async function refreshHeart() {
@@ -102,6 +109,8 @@ async function refreshHeart() {
 
 function resetGallery() {
   galleryRequest++;
+  el('photo-viewer').close();
+  el('photo-full').removeAttribute('src');
   el('gallery-track').replaceChildren();
   el('gallery-window').hidden = true;
   el('gallery-toggle').hidden = true;
@@ -125,16 +134,27 @@ async function loadGallery() {
   for (let index = 0; index < count; index++) {
     const image = document.createElement('img');
     image.src = photos[index % photos.length];
-    image.alt = index < photos.length ? `Photo ${index + 1} of Waleed and Roha’s memories` : '';
+    image.alt = '';
     image.decoding = 'async';
-    if (index >= photos.length) image.className = 'gallery-repeat';
-    group.append(image);
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'gallery-photo';
+    button.dataset.photo = String(index % photos.length + 1);
+    button.setAttribute('aria-label', `Open photo ${button.dataset.photo}`);
+    if (index >= photos.length) {
+      button.classList.add('gallery-repeat');
+      button.tabIndex = -1;
+      button.setAttribute('aria-hidden', 'true');
+    }
+    button.append(image);
+    group.append(button);
   }
   track.append(group);
   if (animated) {
     const copy = group.cloneNode(true);
     copy.classList.add('gallery-copy');
     copy.setAttribute('aria-hidden', 'true');
+    for (const button of copy.querySelectorAll('button')) button.tabIndex = -1;
     track.append(copy);
   }
   window.classList.toggle('gallery-animated', animated);
@@ -144,6 +164,18 @@ async function loadGallery() {
   window.hidden = false;
   el('gallery-empty').hidden = true;
 }
+
+el('gallery-track').onclick = event => {
+  const button = event.target.closest('.gallery-photo');
+  if (!button || !account) return;
+  const viewer = el('photo-viewer');
+  el('photo-full').src = button.querySelector('img').src;
+  el('photo-caption').textContent = `Our little memories · Photo ${button.dataset.photo}`;
+  viewer.showModal();
+};
+el('photo-viewer').addEventListener('close', () => {
+  el('photo-full').removeAttribute('src');
+});
 
 el('gallery-toggle').onclick = () => {
   const paused = el('gallery-window').classList.toggle('gallery-paused');
