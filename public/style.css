@@ -333,3 +333,55 @@ select {
   .gallery-animated .gallery-track { animation: none; }
   .gallery-copy, .gallery-repeat, #gallery-toggle { display: none !important; }
 }
+
+.conversation-heart {
+  display: flex;
+  align-items: center;
+  gap: clamp(14px, 4vw, 32px);
+  padding: clamp(14px, 3vw, 28px);
+  margin-top: 28px;
+}
+.conversation-heart h2 { margin: 0; font-size: clamp(1rem, 2.8vw, 1.35rem); }
+.heart-minutes {
+  margin: 3px 0 4px;
+  color: #ffd0de;
+  font-size: clamp(1.4rem, 5vw, 2.45rem);
+  font-weight: 750;
+  letter-spacing: -.045em;
+  font-variant-numeric: tabular-nums;
+}
+.heart-caption { margin: 0; color: var(--muted); font-size: .875rem; }
+.heart-shape {
+  position: relative;
+  flex: 0 0 clamp(66px, 13vw, 126px);
+  aspect-ratio: 1;
+  background: linear-gradient(150deg, #6f344f, #402536);
+  clip-path: polygon(50% 98%, 39% 88%, 24% 74%, 12% 60%, 4% 46%, 1% 34%, 2% 23%, 7% 13%, 15% 6%, 25% 3%, 35% 4%, 44% 9%, 50% 16%, 56% 9%, 65% 4%, 75% 3%, 85% 6%, 93% 13%, 98% 23%, 99% 34%, 96% 46%, 88% 60%, 76% 74%, 61% 88%);
+}
+.heart-liquid {
+  position: absolute;
+  inset: auto 0 0;
+  height: var(--fill, 0%);
+  background: linear-gradient(155deg, #ff9ab6 2%, #f9456d 40%, #a70d42 100%);
+  transition: height .8s ease;
+}
+.heart-liquid::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -10%;
+  width: 120%;
+  height: min(6px, 100%);
+  border-radius: 0 0 65% 35%;
+  background: #ffc0ce;
+  opacity: .65;
+  animation: heart-ripple 4s ease-in-out infinite alternate;
+}
+@keyframes heart-ripple {
+  from { transform: scaleX(1) skewY(-2deg); }
+  to { transform: scaleX(1.14) skewY(2deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .heart-liquid { transition: none; }
+  .heart-liquid::before { animation: none; }
+}

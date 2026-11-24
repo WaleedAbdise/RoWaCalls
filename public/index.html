@@ -126,6 +126,17 @@
           <p class="room-tip">Keep this page open to receive calls.</p>
           <button id="enable-ringer" class="quiet">Enable ringer</button>
         </div>
+        <section class="card conversation-heart" aria-labelledby="heart-title">
+          <div class="heart-shape" id="heart-meter" role="meter" aria-labelledby="heart-title"
+               aria-valuemin="0" aria-valuemax="4500" aria-valuenow="0" aria-valuetext="Loading this month’s call time">
+            <div class="heart-liquid" id="heart-liquid"></div>
+          </div>
+          <div>
+            <h2 id="heart-title">Time together this month</h2>
+            <p class="heart-minutes" id="heart-minutes">Checking call time…</p>
+            <p class="heart-caption">Every minute together counts once here. ♡</p>
+          </div>
+        </section>
         <section class="gallery" aria-labelledby="gallery-title">
           <div class="gallery-heading">
             <h2 id="gallery-title">Our little memories <span aria-hidden="true">♡</span></h2>

@@ -63,6 +63,23 @@ export function createQuota(secure) {
       const used = endpoint ? Number(await redis('GET', key(month))) : useLocal(month);
       return Number.isFinite(used) && used < limit;
     },
+    async usage(now = Date.now(), lease) {
+      const month = monthAt(now);
+      const active = lease?.month === month && now < lease.deadline ? lease : null;
+      let unused = active ? Math.max(0, active.deadline - now) : 0;
+      let used;
+      if (!endpoint) {
+        used = useLocal(month) - unused;
+      } else if (active) {
+        const [total, reserved] = await redis('MGET', key(month), active.reservation);
+        unused = Math.min(Number(reserved), unused);
+        used = Number(total) - unused;
+      } else {
+        used = Number(await redis('GET', key(month)));
+      }
+      if (!Number.isFinite(used)) throw new Error('Invalid monthly usage.');
+      return { usedMs: Math.min(limit, Math.max(0, used)), limitMs: limit, runningMs: unused };
+    },
     async reserve(id, now = Date.now()) {
       const month = monthAt(now);
       const date = new Date(now);

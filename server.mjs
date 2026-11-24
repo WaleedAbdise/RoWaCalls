@@ -39,6 +39,7 @@ const sessions = new Map();
 const attempts = new Map();
 const sessionDuration = 7 * 86400;
 let call = null;
+const pendingRefunds = new Set();
 
 const staticFiles = new Map([
   ['/', ['index.html', 'text/html']],
@@ -184,7 +185,13 @@ function expire(now) {
 function endCall(reason) {
   const lease = call.lease;
   call = { id: call.id, caller: call.caller, callee: call.callee, state: 'ended', reason, updated: Date.now() };
-  if (lease) void quota.release(lease).catch(() => console.error('Could not return unused call time.'));
+  if (lease) refundTime(lease);
+}
+
+function refundTime(lease, endedAt = Date.now()) {
+  const refund = quota.release(lease, endedAt).catch(() => console.error('Could not return unused call time.'));
+  pendingRefunds.add(refund);
+  void refund.then(() => pendingRefunds.delete(refund));
 }
 
 function snapshot(id, session, now) {
@@ -267,6 +274,16 @@ const server = createServer(async (req, res) => {
     if (path === '/api/state' && req.method === 'GET') {
       return json(res, 200, { user: session.user, ...snapshot(id, session, now) });
     }
+    if (path === '/api/usage' && req.method === 'GET') {
+      try {
+        await Promise.all(pendingRefunds);
+        expire(Date.now());
+        await Promise.all(pendingRefunds);
+        return json(res, 200, await quota.usage(Date.now(), call?.lease));
+      } catch {
+        return json(res, 503, { error: 'Monthly call usage is unavailable.' });
+      }
+    }
     if (path === '/api/ice' && req.method === 'GET') {
       try {
         if (!(await quota.available())) return json(res, 429, { error: quotaMessage });
@@ -318,7 +335,7 @@ const server = createServer(async (req, res) => {
         ringing.accepting = false;
       }
       if (call !== ringing || !sessions.has(id)) {
-        if (lease) void quota.release(lease, lease.start).catch(() => console.error('Could not return unused call time.'));
+        if (lease) refundTime(lease, lease.start);
         return conflict();
       }
       if (!lease) {

@@ -17,6 +17,10 @@ let ringingMode;
 let ringGain;
 let nativeFullscreen = false;
 let galleryRequest = 0;
+let heartRequest = 0;
+let heartUsage;
+let heartCallActive = false;
+const minuteMs = 60000;
 let cameraTest = null;
 const videoQuality = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 15 } };
 
@@ -47,6 +51,10 @@ function setAccount(user) {
   el('logout').hidden = !user;
   if (!user) {
     resetGallery();
+    heartRequest++;
+    heartUsage = null;
+    heartCallActive = false;
+    renderHeart();
     closeCameraTest();
     cleanup();
     incoming = null;
@@ -59,6 +67,37 @@ function setAccount(user) {
   el('avatar').textContent = '🦭';
   el('welcome').textContent = `Signed in as ${names[user]} ${seals[user]}`;
   void loadGallery();
+  void refreshHeart();
+}
+
+function renderHeart() {
+  const data = heartUsage;
+  const estimate = data ? Math.min(data.runningMs, Math.max(0, performance.now() - data.receivedAt)) : 0;
+  const used = data ? Math.min(data.limitMs, data.usedMs + estimate) : 0;
+  const minutes = Math.floor(used / minuteMs);
+  const meter = el('heart-meter');
+  el('heart-liquid').style.setProperty('--fill', data ? `${100 * used / data.limitMs}%` : '0%');
+  el('heart-minutes').textContent = data
+    ? `${minutes.toLocaleString()} ${minutes === 1 ? 'minute' : 'minutes'}`
+    : 'Checking call time…';
+  meter.setAttribute('aria-valuenow', String(minutes));
+  meter.setAttribute('aria-valuetext', data
+    ? `${minutes} of ${data.limitMs / minuteMs} shared minutes`
+    : 'Loading this month’s call time');
+  if (data) meter.setAttribute('aria-valuemax', String(data.limitMs / minuteMs));
+}
+
+async function refreshHeart() {
+  if (!account) return;
+  const request = ++heartRequest;
+  try {
+    const data = await api('usage');
+    if (request !== heartRequest) return;
+    heartUsage = { ...data, receivedAt: performance.now() };
+    renderHeart();
+  } catch {
+    if (request === heartRequest && !heartUsage) el('heart-minutes').textContent = 'Call time temporarily unavailable';
+  }
 }
 
 function resetGallery() {
@@ -654,6 +693,15 @@ async function poll() {
   try {
     const snapshot = await api('state');
     lastPoll = Date.now();
+    const isActive = snapshot.call?.state === 'active';
+    if (isActive !== heartCallActive) {
+      heartCallActive = isActive;
+      if (!isActive && heartUsage) {
+        const elapsed = Math.min(heartUsage.runningMs, performance.now() - heartUsage.receivedAt);
+        heartUsage = { ...heartUsage, usedMs: heartUsage.usedMs + elapsed, runningMs: 0 };
+      }
+      void refreshHeart();
+    }
     el('presence-dot').classList.toggle('online', snapshot.online);
     el('presence').textContent = snapshot.online ? 'Online' : 'Away';
     if (!busy && version === actionVersion) await reconcile(snapshot);
@@ -739,6 +787,15 @@ window.addEventListener('pagehide', () => {
 });
 setInterval(poll, 900);
 setInterval(updateRing, 350);
+setInterval(() => {
+  if (account && !document.hidden) void refreshHeart();
+}, 15000);
+setInterval(() => {
+  if (heartUsage?.runningMs && !document.hidden) renderHeart();
+}, 1000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void refreshHeart();
+});
 try {
   const snapshot = await api('state');
   if (!account) setAccount(snapshot.user);
