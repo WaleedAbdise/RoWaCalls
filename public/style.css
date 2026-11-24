@@ -1,9 +1,14 @@
 :root {
   color-scheme: light;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  color: #392332;
-  background: #fff8f5;
+  color: var(--ink);
+  background: var(--page);
   font-synthesis: none;
+  --page: #fff8f5;
+  --bloom-rose: #f6dde9;
+  --bloom-peach: #ffded5;
+  --paper-dots: #9e38591c;
+  --focus: #a33159;
   --ink: #392332;
   --muted: #6f5062;
   --rose: #9f3057;
@@ -13,21 +18,37 @@
   --soft-hover: #f3d7e0;
   --shadow: 0 18px 45px #73324d13, 0 2px 5px #73324d0d;
 }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #19131c;
+  --bloom-rose: #3b2138;
+  --bloom-peach: #3a212c;
+  --paper-dots: #e4a5c522;
+  --focus: #ffc0d5;
+  --ink: #fff3f6;
+  --muted: #dabac8;
+  --rose: #ffa9c9;
+  --line: #69465b;
+  --surface: #2c202e;
+  --soft: #3d2b40;
+  --soft-hover: #55354c;
+  --shadow: 0 18px 45px #0e07134d, 0 2px 5px #0e071340;
+}
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body {
   margin: 0;
   min-width: 280px;
   background:
-    radial-gradient(ellipse at 92% 2%, #f6dde9 0%, transparent 44%),
-    radial-gradient(ellipse at 1% 68%, #ffded5 0%, transparent 48%),
-    radial-gradient(circle, #9e38591c 1px, transparent 1px) 0 0 / 24px 24px,
-    #fff8f5;
+    radial-gradient(ellipse at 92% 2%, var(--bloom-rose) 0%, transparent 44%),
+    radial-gradient(ellipse at 1% 68%, var(--bloom-peach) 0%, transparent 48%),
+    radial-gradient(circle, var(--paper-dots) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--page);
 }
 button, input, select { font: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: default; opacity: .54; }
-:focus-visible { outline: 3px solid #a33159; outline-offset: 4px; }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 4px; }
 .shell {
   max-width: 1200px;
   min-height: 100svh;
@@ -65,6 +86,32 @@ button:disabled { cursor: default; opacity: .54; }
 }
 .brand-mark { width: 39px; height: 39px; border-radius: 44% 52% 47% 49%; transform: rotate(-9deg); }
 .top-actions, .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.theme-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  min-height: 44px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.theme-toggle span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: var(--muted);
+  font: 600 1.1rem / 1 Georgia, serif;
+}
+.theme-toggle[aria-pressed="false"] span:first-child,
+.theme-toggle[aria-pressed="true"] span:last-child {
+  color: var(--rose);
+  background: var(--soft);
+}
+.theme-toggle:hover { border-color: var(--rose); }
 .private {
   display: inline-flex;
   align-items: center;
@@ -261,6 +308,7 @@ button { border: 1px solid transparent; border-radius: 12px; min-height: 46px; p
   color-scheme: dark;
   color: #fff6f8;
   background: #201522;
+  --focus: #ffc0d5;
   --ink: #fff6f8;
   --muted: #e2bfce;
   --rose: #ffc4d9;
@@ -460,8 +508,7 @@ body:has(#photo-viewer[open]) .gallery-track,
   letter-spacing: -.045em;
   font-variant-numeric: tabular-nums;
 }
-.heart-caption, .heart-cap { margin: 0; color: var(--muted); font-size: .875rem; }
-.heart-cap { margin-top: 4px; }
+.heart-cap { margin: 4px 0 0; color: var(--muted); font-size: .875rem; }
 .heart-art {
   flex: 0 0 clamp(68px, 14vw, 133px);
   aspect-ratio: 1;
@@ -505,4 +552,37 @@ body:has(#photo-viewer[open]) .gallery-track,
 @media (prefers-reduced-motion: reduce) {
   .heart-liquid { transition: none; }
   .heart-liquid::before { animation: none; }
+}
+
+/* Keep the stationery colors recognizable in the evening palette. */
+[data-theme="dark"] .private { background: #33242f; }
+[data-theme="dark"] .private span, [data-theme="dark"] .art-sparkle { color: var(--rose); }
+[data-theme="dark"] .login-card { background: linear-gradient(140deg, #312338, #382634); }
+[data-theme="dark"] .contact-card { background: linear-gradient(120deg, #302334, #402a3c); }
+[data-theme="dark"] .art-avatar { border-color: #4e384f; outline-color: #a6789a; }
+[data-theme="dark"] .art-w { background: linear-gradient(#614471, #503858); }
+[data-theme="dark"] .art-r { background: linear-gradient(#82465f, #603749); }
+[data-theme="dark"] .avatar { border-color: #4e384f; background: linear-gradient(140deg, #86506a, #654055); }
+[data-theme="dark"] .avatar[data-partner="waleed"] { background: linear-gradient(140deg, #6c527c, #503759); }
+[data-theme="dark"] .primary { background: linear-gradient(135deg, #fabbd1, #e888ad); color: #42152d; }
+[data-theme="dark"] .primary:hover:not(:disabled) { background: #ffc9da; }
+[data-theme="dark"] #presence-dot.online { background: #a1e4ae; box-shadow: 0 0 0 3px #375848; }
+[data-theme="dark"] .conversation-heart { background: linear-gradient(125deg, #452a3e, #302333 60%, #3d2b48); }
+[data-theme="dark"] .heart-art { background: radial-gradient(circle at 45% 30%, #664258, #3e2a44); border-color: #b17794; }
+[data-theme="dark"] .heart-shape { background: linear-gradient(155deg, #955772 8%, #743951 55%, #5a2b49); }
+[data-theme="dark"] #gallery-empty { background: #302333; border-color: #8d5f80; }
+[data-theme="dark"] .gallery-photo { background: #513747; }
+[data-theme="dark"] .gallery-photo:nth-child(even) { background: #47354f; }
+[data-theme="dark"] .gallery-photo img { background: #3f2d43; }
+
+@media (max-width: 440px) {
+  .topbar { gap: 10px; }
+  .top-actions { gap: 6px; }
+  .topbar .private { display: none; }
+}
+@media (max-width: 340px) {
+  .brand { font-size: 1.1rem; gap: 7px; }
+  .brand-mark { width: 32px; height: 32px; }
+  .topbar .quiet { padding-inline: 7px; font-size: .86rem; }
+  .theme-toggle span { width: 25px; }
 }

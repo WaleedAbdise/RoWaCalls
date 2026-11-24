@@ -79,7 +79,6 @@ function renderHeart() {
   const milestone = minutes >= 3000 ? 5000 : minutes >= 1000 ? 3000 : 1000;
   const meter = el('heart-meter');
   el('heart-liquid').style.setProperty('--fill', `${Math.min(100, 100 * used / (milestone * minuteMs))}%`);
-  el('heart-milestone').textContent = `${milestone.toLocaleString()}-minute heart milestone`;
   el('heart-cap').hidden = !data || milestone <= data.limitMs / minuteMs;
   if (data) {
     el('heart-cap').textContent = `Monthly call limit · ${(data.limitMs / minuteMs).toLocaleString()} minutes`;
@@ -89,7 +88,7 @@ function renderHeart() {
     : 'Checking call time…';
   meter.setAttribute('aria-valuenow', String(minutes));
   meter.setAttribute('aria-valuetext', data
-    ? `${minutes} shared minutes toward the ${milestone}-minute heart milestone`
+    ? `${minutes} shared minutes this month`
     : 'Loading this month’s call time');
   meter.setAttribute('aria-valuemax', String(milestone));
 }

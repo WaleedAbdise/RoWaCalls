@@ -45,6 +45,7 @@ const staticFiles = new Map([
   ['/', ['index.html', 'text/html']],
   ['/style.css', ['style.css', 'text/css']],
   ['/video-filters.js', ['video-filters.js', 'text/javascript']],
+  ['/theme.js', ['theme.js', 'text/javascript']],
   ['/app.js', ['app.js', 'text/javascript']]
 ].map(([path, [file, type]]) => [path, { type, body: readFileSync(new URL(`./public/${file}`, import.meta.url)) }]));
 const galleryDirectory = process.env.GALLERY_DIRECTORY || fileURLToPath(new URL('./images/', import.meta.url));

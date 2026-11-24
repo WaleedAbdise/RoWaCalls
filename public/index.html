@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#fff8f5">
   <meta name="description" content="Private voice and video calls for Waleed and Roha.">
   <title>ROWA Calls</title>
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
@@ -14,6 +15,9 @@
     <header class="topbar">
       <a class="brand" href="/" aria-label="ROWA Calls home"><span class="brand-mark" aria-hidden="true">♥</span><span>ROWA <span class="brand-light">Calls</span></span></a>
       <div class="top-actions">
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Dark mode" aria-pressed="false">
+          <span aria-hidden="true">☀</span><span aria-hidden="true">☾</span>
+        </button>
         <span class="private"><span aria-hidden="true">●</span> Private room</span>
         <button id="logout" class="quiet" hidden>Sign out</button>
       </div>
@@ -139,7 +143,6 @@
           <div>
             <h2 id="heart-title">Time together this month</h2>
             <p class="heart-minutes" id="heart-minutes">Checking call time…</p>
-            <p class="heart-caption" id="heart-milestone">1,000-minute heart milestone</p>
             <p class="heart-cap" id="heart-cap" hidden>Calls reset monthly at 4,500 minutes.</p>
           </div>
         </section>
